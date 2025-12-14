@@ -1,0 +1,91 @@
+name: Update Data and Images Synchronously
+
+on:
+  schedule:
+    # Запуск кожні 10 хвилин
+    - cron: '1 * * * *'
+    - cron: '11 * * * *'
+    - cron: '21 * * * *'
+    - cron: '31 * * * *'
+    - cron: '41 * * * *'
+    - cron: '51 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-all:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11' # Використовуємо 3.11 для сумісності з парсером
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Встановлюємо залежності для ВСІХ скриптів відразу
+          pip install cloudscraper matplotlib numpy
+
+      - name: Run Parser (Generate JSON)
+        env:
+          # Ваші секрети для парсера
+          ESVITLO_LOGIN: ${{ secrets.ESVITLO_LOGIN }}
+          ESVITLO_PASSWORD: ${{ secrets.ESVITLO_PASSWORD }}
+          ESVITLO_EIC_1_1: ${{ secrets.ESVITLO_EIC_1_1 }}
+          ESVITLO_EIC_1_2: ${{ secrets.ESVITLO_EIC_1_2 }}
+          ESVITLO_EIC_2_1: ${{ secrets.ESVITLO_EIC_2_1 }}
+          ESVITLO_EIC_2_2: ${{ secrets.ESVITLO_EIC_2_2 }}
+          ESVITLO_EIC_3_1: ${{ secrets.ESVITLO_EIC_3_1 }}
+          ESVITLO_EIC_3_2: ${{ secrets.ESVITLO_EIC_3_2 }}
+          ESVITLO_EIC_4_1: ${{ secrets.ESVITLO_EIC_4_1 }}
+          ESVITLO_EIC_4_2: ${{ secrets.ESVITLO_EIC_4_2 }}
+          ESVITLO_EIC_5_1: ${{ secrets.ESVITLO_EIC_5_1 }}
+          ESVITLO_EIC_5_2: ${{ secrets.ESVITLO_EIC_5_2 }}
+          ESVITLO_EIC_6_1: ${{ secrets.ESVITLO_EIC_6_1 }}
+          ESVITLO_EIC_6_2: ${{ secrets.ESVITLO_EIC_6_2 }}
+        run: |
+          # Запускаємо парсер. Він оновить файл data/Vinnytsiaoblenerho.json ЛОКАЛЬНО
+          python scripts/parser.py
+
+      - name: Generate Images from New Data
+        run: |
+          # Визначаємо шлях до щойно оновленого JSON
+          JSON_FILE="data/Vinnytsiaoblenerho.json"
+          OUT_DIR="images/Vinnytsiaoblenerho"
+          
+          echo "[INFO] JSON file prepared. Starting image generation..."
+          
+          # 1. Генеруємо окремі графіки
+          python scripts/render_png.py --json "$JSON_FILE" --out "$OUT_DIR"
+          
+          # 2. Генеруємо загальний графік на сьогодні
+          python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$OUT_DIR"
+          
+          # 3. Генеруємо загальний графік на завтра
+          python scripts/render_png_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR"
+
+      - name: Commit and Push All Changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Додаємо JSON файл (він міг змінитися)
+          git add data/Vinnytsiaoblenerho.json
+          
+          # Додаємо папку з картинками (вони могли змінитися або додатися нові)
+          git add images/Vinnytsiaoblenerho/
+          
+          # Перевіряємо статус - чи є що комітити
+          if git diff --quiet --cached; then
+            echo "[INFO] No changes detected in data or images. Skipping commit."
+          else
+            echo "[INFO] Changes detected. Committing..."
+            # Єдиний коміт для всього
+            git commit -m "Sync update: Data & Images $(date)"
+            git push
+          fi
