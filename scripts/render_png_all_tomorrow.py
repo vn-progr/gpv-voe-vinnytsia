@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - таблиця усіх графіків на завтра
-Генерує PNG тільки якщо дані змінилися (за хешем)
-Хеші зберігаються в папці hash/
+Генерує PNG тільки якщо дані змінилися (за хешем) АБО якщо змінилася дата
+Хеші та дати зберігаються в папці hash/
+Використовує той же метод розрахунку дати, що й render_schedule.py
 """
 
 import json
@@ -49,6 +50,18 @@ def load_previous_hash(hash_dir):
             print(f"[WARN] Could not read hash file {hash_file}: {e}")
     return None
 
+def load_previous_date(hash_dir):
+    """Завантажує попередню дату з файлу дати"""
+    date_file = hash_dir / 'gpv-all-tomorrow.date'
+    
+    if date_file.exists():
+        try:
+            with open(date_file, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"[WARN] Could not read date file {date_file}: {e}")
+    return None
+
 def save_hash(hash_dir, data_hash):
     """Зберігає хеш даних у папку hash/"""
     hash_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +74,18 @@ def save_hash(hash_dir, data_hash):
     except Exception as e:
         print(f"[WARN] Could not save hash file {hash_file}: {e}")
 
+def save_date(hash_dir, date_str):
+    """Зберігає поточну дату у файл для перевірки на наступний день"""
+    hash_dir.mkdir(parents=True, exist_ok=True)
+    
+    date_file = hash_dir / 'gpv-all-tomorrow.date'
+    
+    try:
+        with open(date_file, 'w', encoding='utf-8') as f:
+            f.write(date_str)
+    except Exception as e:
+        print(f"[WARN] Could not save date file {date_file}: {e}")
+
 def render_all_tomorrow_schedules(json_path, out_path=None):
     """Рендерити всі графіки на завтра в одну таблицю"""
     
@@ -70,10 +95,18 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     fact_data = data.get('fact', {}).get('data', {})
     sch_names = data.get('preset', {}).get('sch_names', {})
     last_updated = data.get('fact', {}).get('update', '')
+    
+    # === РОЗРАХОВУЄМО ЗАВТРА ЯК У render_schedule.py ===
     today_ts = str(data.get('fact', {}).get('today'))
     tomorrow_ts = str(int(today_ts) + 86400)
     
+    print(f"[INFO] today_ts={today_ts}, tomorrow_ts={tomorrow_ts}")
+    
     tomorrow_data = fact_data.get(tomorrow_ts, {})
+    
+    # Отримуємо дату завтра з таймзоною Київ
+    tomorrow_date = datetime.fromtimestamp(int(tomorrow_ts), tz=KYIV_TZ)
+    print(f"[INFO] Tomorrow date: {tomorrow_date.strftime('%d.%m.%Y %H:%M:%S')}")
     
     # Папка для виходу
     if out_path:
@@ -90,15 +123,39 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     
     output_file = out_p / 'gpv-all-tomorrow.png'
     
-    # Якщо хеші збігаються, пропускаємо генерацію
-    if new_hash == prev_hash and output_file.exists():
-        print(f"[SKIP] gpv-all-tomorrow.png (no data changes)")
+    # Кодуємо дату для порівняння (YYYY-MM-DD)
+    tomorrow_date_code = tomorrow_date.strftime('%Y-%m-%d')
+    prev_date = load_previous_date(hash_dir)
+    
+    print(f"[INFO] New hash: {new_hash[:16]}...")
+    print(f"[INFO] Prev hash: {prev_hash[:16] if prev_hash else 'None'}...")
+    print(f"[INFO] Prev date: {prev_date}, Tomorrow date: {tomorrow_date_code}")
+    print(f"[INFO] File exists: {output_file.exists()}")
+    
+    # === РІШЕННЯ: РЕГЕНЕРУВАТИ ЯКЩО ===
+    # 1. Хеш змінився
+    # 2. АБО дата змінилася (настав новий день)
+    # 3. АБО файл не існує
+    date_changed = (prev_date != tomorrow_date_code)
+    hash_changed = (new_hash != prev_hash)
+    
+    if not output_file.exists():
+        print(f"[REGEN] gpv-all-tomorrow.png (file not found)")
+        regenerate = True
+    elif hash_changed:
+        print(f"[REGEN] gpv-all-tomorrow.png (hash changed)")
+        regenerate = True
+    elif date_changed:
+        print(f"[REGEN] gpv-all-tomorrow.png (date changed: {prev_date} → {tomorrow_date_code})")
+        regenerate = True
+    else:
+        print(f"[SKIP] gpv-all-tomorrow.png (no changes)")
+        regenerate = False
+    
+    if not regenerate:
         return
     
-    print(f"[GENERATE] gpv-all-tomorrow.png")
-    
-    # Отримуємо дату завтра з таймзоною Київ
-    tomorrow_date = datetime.fromtimestamp(int(tomorrow_ts), tz=KYIV_TZ)
+    print(f"[GENERATE] gpv-all-tomorrow.png for {tomorrow_date.strftime('%d.%m.%Y')}")
     
     # Форматуємо дату як "ДД місяць" (укр.)
     months_uk = {
@@ -109,16 +166,15 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     
     tomorrow_str = f'{tomorrow_date.day:02d} {months_uk[tomorrow_date.month]}'
     
-    # Отримуємо всі GPV ключі з завтра (якщо немає - fallback на сьогодні)
+    # Отримуємо всі GPV ключі з завтра
     gpv_keys = sorted([k for k in tomorrow_data if k.startswith('GPV')])
-    if not gpv_keys:
-        today_data = fact_data.get(today_ts, {})
-        gpv_keys = sorted([k for k in today_data if k.startswith('GPV')])
+    
+    print(f"[INFO] Found {len(gpv_keys)} GPV schedules")
     
     num_schedules = len(gpv_keys)
     
     if num_schedules == 0:
-        print("ERROR: No GPV schedules found in data")
+        print("[SKIP] gpv-all-tomorrow.png (No GPV schedules found)")
         return
     
     # Розміри клітинок
@@ -281,10 +337,13 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     
     # === ЗБЕРЕЖЕННЯ PNG ===
     plt.savefig(output_file, facecolor=WHITE, dpi=150, bbox_inches='tight', pad_inches=0.13)
-    print(f"[OK] {output_file}")
+    print(f"[OK] Saved {output_file}")
     
     # Зберігаємо хеш в папку hash/
     save_hash(hash_dir, new_hash)
+    
+    # Зберігаємо дату в папку hash/
+    save_date(hash_dir, tomorrow_date_code)
     
     plt.close()
 
