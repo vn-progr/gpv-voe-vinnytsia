@@ -1,7 +1,7 @@
 name: Update Data and Images Synchronously
 
 on:
-  schedule:
+  # schedule:
     # Запуск кожні 10 хвилин
     # - cron: '1 * * * *'
     # - cron: '11 * * * *'
