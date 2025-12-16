@@ -3,12 +3,12 @@ name: Update Data and Images Synchronously
 on:
   schedule:
     # Запуск кожні 10 хвилин
-    - cron: '1 * * * *'
-    - cron: '11 * * * *'
-    - cron: '21 * * * *'
-    - cron: '31 * * * *'
-    - cron: '41 * * * *'
-    - cron: '51 * * * *'
+    # - cron: '1 * * * *'
+    # - cron: '11 * * * *'
+    # - cron: '21 * * * *'
+    # - cron: '31 * * * *'
+    # - cron: '41 * * * *'
+    # - cron: '51 * * * *'
   workflow_dispatch:
 
 permissions:
