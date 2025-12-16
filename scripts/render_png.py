@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - окремі таблиці (2 дні на одну чергу)
-Генерує PNG тільки якщо дані змінилися (за хешем)
-Хеші зберігаються в папці hash/
+Генерує PNG тільки якщо дані змінилися (за хешем) АБО якщо змінилася дата
+Хеші та дати зберігаються в папці hash/
 """
 
 import json
@@ -67,6 +67,20 @@ def load_previous_hash(hash_dir, gpv_key):
             print(f"[WARN] Could not read hash file {hash_file}: {e}")
     return None
 
+def load_previous_date(hash_dir, gpv_key):
+    """Завантажує попередню дату з файлу дати"""
+    hash_filename = format_hash_filename(gpv_key)
+    date_filename = hash_filename.replace('.hash', '.date')
+    date_file = hash_dir / date_filename
+    
+    if date_file.exists():
+        try:
+            with open(date_file, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"[WARN] Could not read date file {date_file}: {e}")
+    return None
+
 def save_hash(hash_dir, gpv_key, data_hash):
     """Зберігає хеш даних у папку hash/"""
     hash_dir.mkdir(parents=True, exist_ok=True)
@@ -79,6 +93,20 @@ def save_hash(hash_dir, gpv_key, data_hash):
             f.write(data_hash)
     except Exception as e:
         print(f"[WARN] Could not save hash file {hash_file}: {e}")
+
+def save_date(hash_dir, gpv_key, date_str):
+    """Зберігає поточну дату у файл для перевірки на наступний день"""
+    hash_dir.mkdir(parents=True, exist_ok=True)
+    
+    hash_filename = format_hash_filename(gpv_key)
+    date_filename = hash_filename.replace('.hash', '.date')
+    date_file = hash_dir / date_filename
+    
+    try:
+        with open(date_file, 'w', encoding='utf-8') as f:
+            f.write(date_str)
+    except Exception as e:
+        print(f"[WARN] Could not save date file {date_file}: {e}")
 
 def render_schedule(json_path, gpv_key=None, out_path=None):
     """Рендерити розклад"""
@@ -108,6 +136,9 @@ def render_schedule(json_path, gpv_key=None, out_path=None):
     
     today_str = f'{today_date.day:02d} {months_uk[today_date.month]}'
     tomorrow_str = f'{tomorrow_date.day:02d} {months_uk[tomorrow_date.month]}'
+    
+    # Кодуємо дату для порівняння (YYYY-MM-DD)
+    today_date_code = today_date.strftime('%Y-%m-%d')
     
     gpv_keys = [gpv_key] if gpv_key else sorted([k for k in today_data if k.startswith('GPV')])
     
@@ -143,10 +174,31 @@ def render_schedule(json_path, gpv_key=None, out_path=None):
         # Завантажуємо попередній хеш
         prev_hash = load_previous_hash(hash_dir, gkey)
         
-        # Якщо хеші збігаються, пропускаємо генерацію
-        if new_hash == prev_hash and output_file.exists():
-            print(f"[SKIP] {filename} (no data changes)")
+        # Завантажуємо попередню дату
+        prev_date = load_previous_date(hash_dir, gkey)
+        
+        # === РІШЕННЯ: РЕГЕНЕРУВАТИ ЯКЩО ===
+        # 1. Хеш змінився
+        # 2. АБО дата змінилася (настав новий день)
+        # 3. АБО файл не існує
+        date_changed = (prev_date != today_date_code)
+        hash_changed = (new_hash != prev_hash)
+        
+        if not output_file.exists():
+            print(f"[REGEN] {filename} (file not found)")
+            regenerate = True
+        elif hash_changed:
+            print(f"[REGEN] {filename} (hash changed)")
+            regenerate = True
+        elif date_changed:
+            print(f"[REGEN] {filename} (date changed: {prev_date} → {today_date_code})")
+            regenerate = True
+        else:
+            print(f"[SKIP] {filename} (no changes)")
             stats['skipped'] += 1
+            regenerate = False
+        
+        if not regenerate:
             continue
         
         stats['generated'] += 1
@@ -354,6 +406,9 @@ def render_schedule(json_path, gpv_key=None, out_path=None):
         
         # Зберігаємо хеш в папку hash/
         save_hash(hash_dir, gkey, new_hash)
+        
+        # Зберігаємо дату в папку hash/
+        save_date(hash_dir, gkey, today_date_code)
         
         plt.close()
     
