@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - таблиця усіх графіків на сьогодні
-Генерує PNG тільки якщо дані змінилися (за хешем)
-Хеші зберігаються в папці hash/
+Генерує PNG тільки якщо дані змінилися (за хешем) АБО якщо змінилася дата
+Хеші та дати зберігаються в папці hash/
 """
 
 import json
@@ -49,6 +49,18 @@ def load_previous_hash(hash_dir):
             print(f"[WARN] Could not read hash file {hash_file}: {e}")
     return None
 
+def load_previous_date(hash_dir):
+    """Завантажує попередню дату з файлу дати"""
+    date_file = hash_dir / 'gpv-all-today.date'
+    
+    if date_file.exists():
+        try:
+            with open(date_file, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"[WARN] Could not read date file {date_file}: {e}")
+    return None
+
 def save_hash(hash_dir, data_hash):
     """Зберігає хеш даних у папку hash/"""
     hash_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +72,18 @@ def save_hash(hash_dir, data_hash):
             f.write(data_hash)
     except Exception as e:
         print(f"[WARN] Could not save hash file {hash_file}: {e}")
+
+def save_date(hash_dir, date_str):
+    """Зберігає поточну дату у файл для перевірки на наступний день"""
+    hash_dir.mkdir(parents=True, exist_ok=True)
+    
+    date_file = hash_dir / 'gpv-all-today.date'
+    
+    try:
+        with open(date_file, 'w', encoding='utf-8') as f:
+            f.write(date_str)
+    except Exception as e:
+        print(f"[WARN] Could not save date file {date_file}: {e}")
 
 def render_all_schedules(json_path, out_path=None):
     """Рендерити всі графіки на сьогодні в одну таблицю"""
@@ -89,15 +113,37 @@ def render_all_schedules(json_path, out_path=None):
     
     output_file = out_p / 'gpv-all-today.png'
     
-    # Якщо хеші збігаються, пропускаємо генерацію
-    if new_hash == prev_hash and output_file.exists():
-        print(f"[SKIP] gpv-all-today.png (no data changes)")
+    # Отримуємо дату з таймзоною Київ
+    today_date = datetime.fromtimestamp(int(today_ts), tz=KYIV_TZ)
+    
+    # Кодуємо дату для порівняння (YYYY-MM-DD)
+    today_date_code = today_date.strftime('%Y-%m-%d')
+    prev_date = load_previous_date(hash_dir)
+    
+    # === РІШЕННЯ: РЕГЕНЕРУВАТИ ЯКЩО ===
+    # 1. Хеш змінився
+    # 2. АБО дата змінилася (настав новий день)
+    # 3. АБО файл не існує
+    date_changed = (prev_date != today_date_code)
+    hash_changed = (new_hash != prev_hash)
+    
+    if not output_file.exists():
+        print(f"[REGEN] gpv-all-today.png (file not found)")
+        regenerate = True
+    elif hash_changed:
+        print(f"[REGEN] gpv-all-today.png (hash changed)")
+        regenerate = True
+    elif date_changed:
+        print(f"[REGEN] gpv-all-today.png (date changed: {prev_date} → {today_date_code})")
+        regenerate = True
+    else:
+        print(f"[SKIP] gpv-all-today.png (no changes)")
+        regenerate = False
+    
+    if not regenerate:
         return
     
     print(f"[GENERATE] gpv-all-today.png")
-    
-    # Отримуємо дату з таймзоною Київ
-    today_date = datetime.fromtimestamp(int(today_ts), tz=KYIV_TZ)
     
     # Форматуємо дату як "ДД місяць" (укр.)
     months_uk = {
@@ -280,6 +326,9 @@ def render_all_schedules(json_path, out_path=None):
     
     # Зберігаємо хеш в папку hash/
     save_hash(hash_dir, new_hash)
+    
+    # Зберігаємо дату в папку hash/
+    save_date(hash_dir, today_date_code)
     
     plt.close()
 
