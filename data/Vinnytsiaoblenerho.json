@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1767162449,
+  "lastUpdated": 1767162568,
   "fact": {
     "data": {
       "1767132000": {
@@ -61,14 +61,14 @@
           "2": "yes",
           "3": "yes",
           "4": "yes",
-          "5": "no",
-          "6": "no",
+          "5": "yes",
+          "6": "yes",
           "7": "yes",
           "8": "yes",
           "9": "yes",
           "10": "yes",
-          "11": "no",
-          "12": "no",
+          "11": "yes",
+          "12": "yes",
           "13": "yes",
           "14": "yes",
           "15": "yes",
@@ -93,8 +93,8 @@
           "8": "yes",
           "9": "yes",
           "10": "yes",
-          "11": "no",
-          "12": "no",
+          "11": "yes",
+          "12": "yes",
           "13": "yes",
           "14": "yes",
           "15": "yes",
@@ -199,8 +199,8 @@
           "10": "yes",
           "11": "yes",
           "12": "yes",
-          "13": "no",
-          "14": "no",
+          "13": "yes",
+          "14": "yes",
           "15": "yes",
           "16": "yes",
           "17": "yes",
@@ -247,8 +247,8 @@
           "6": "yes",
           "7": "yes",
           "8": "yes",
-          "9": "no",
-          "10": "no",
+          "9": "first",
+          "10": "yes",
           "11": "yes",
           "12": "yes",
           "13": "yes",
@@ -632,7 +632,7 @@
         }
       }
     },
-    "update": "31.12.2025 08:27",
+    "update": "31.12.2025 08:29",
     "today": 1767132000
   },
   "preset": {
@@ -659,19 +659,19 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "31.12.2025 08:27"
+    "updateFact": "31.12.2025 08:29"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1767162449,
+    "at": 1767162568,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
   "meta": {
     "schemaVersion": "1.0.0",
-    "contentHash": "fe9b76a324b2e3b0861d86e7e929e92dc8503b6a34ab733fb09b3a83ceb85ae8"
+    "contentHash": "c174d6f0c143ce03e3cb30d3d0143fb699e653d56b40a58f1b20c8ce12b6caf6"
   }
 }
