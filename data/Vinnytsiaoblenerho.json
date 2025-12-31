@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1767206967,
+  "lastUpdated": 1767207095,
   "fact": {
     "data": {
       "1767132000": {
@@ -247,14 +247,14 @@
           "6": "yes",
           "7": "yes",
           "8": "yes",
-          "9": "yes",
+          "9": "first",
           "10": "yes",
           "11": "yes",
           "12": "yes",
           "13": "yes",
           "14": "yes",
           "15": "yes",
-          "16": "yes",
+          "16": "no",
           "17": "yes",
           "18": "yes",
           "19": "yes",
@@ -273,8 +273,8 @@
           "6": "yes",
           "7": "yes",
           "8": "yes",
-          "9": "no",
-          "10": "first",
+          "9": "yes",
+          "10": "yes",
           "11": "yes",
           "12": "yes",
           "13": "yes",
@@ -285,8 +285,8 @@
           "18": "yes",
           "19": "yes",
           "20": "yes",
-          "21": "no",
-          "22": "no",
+          "21": "yes",
+          "22": "yes",
           "23": "yes",
           "24": "yes"
         },
@@ -299,20 +299,20 @@
           "6": "yes",
           "7": "yes",
           "8": "yes",
-          "9": "no",
-          "10": "first",
+          "9": "yes",
+          "10": "yes",
           "11": "yes",
           "12": "yes",
           "13": "yes",
           "14": "yes",
           "15": "yes",
-          "16": "no",
+          "16": "yes",
           "17": "yes",
           "18": "yes",
           "19": "yes",
           "20": "yes",
-          "21": "no",
-          "22": "no",
+          "21": "yes",
+          "22": "yes",
           "23": "yes",
           "24": "yes"
         }
@@ -632,7 +632,7 @@
         }
       }
     },
-    "update": "31.12.2025 20:49",
+    "update": "31.12.2025 20:51",
     "today": 1767132000
   },
   "preset": {
@@ -659,19 +659,19 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "31.12.2025 20:49"
+    "updateFact": "31.12.2025 20:51"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1767206967,
+    "at": 1767207095,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
   "meta": {
     "schemaVersion": "1.0.0",
-    "contentHash": "9178dc068c58f880727baaeabbfe22c2b2a5711b2a3b1bcc7bb91d135872a284"
+    "contentHash": "4fc453aebc6bcbb8268506bed5ad06e328105049d642a7664dde0f0d9be5e4e4"
   }
 }
