@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1768213407,
+  "lastUpdated": 1768213526,
   "fact": {
     "data": {
       "1768168800": {
@@ -632,7 +632,7 @@
         }
       }
     },
-    "update": "12.01.2026 12:23",
+    "update": "12.01.2026 12:25",
     "today": 1768168800
   },
   "preset": {
@@ -659,14 +659,14 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "12.01.2026 12:23"
+    "updateFact": "12.01.2026 12:25"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1768213407,
+    "at": 1768213526,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
