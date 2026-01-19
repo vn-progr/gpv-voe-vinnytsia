@@ -298,7 +298,7 @@ def render_all_schedules(json_path, out_path=None):
                            linewidth=0.5, edgecolor=BORDER, facecolor='none', 
                            transform=fig.transFigure, clip_on=False)
     fig.patches.append(rect_border)
-    fig.text(x3 + cell_w_fig/2 + 0.005, legend_y, 'Світла нема\nперші 30 хв.', fontsize=11, va='center')
+    fig.text(x3 + cell_w_fig/2 + 0.005, legend_y, 'Світла нема\nдругі 30 хв.', fontsize=11, va='center')
     
     # Елемент 4: Права половина оранжева
     x4 = legend_x_center + 1.8 * spacing
@@ -314,7 +314,7 @@ def render_all_schedules(json_path, out_path=None):
                            linewidth=0.5, edgecolor=BORDER, facecolor='none', 
                            transform=fig.transFigure, clip_on=False)
     fig.patches.append(rect_border)
-    fig.text(x4 + cell_w_fig/2 + 0.005, legend_y, 'Світла нема\nдругі 30 хв.', fontsize=11, va='center')
+    fig.text(x4 + cell_w_fig/2 + 0.005, legend_y, 'Світла нема\nперші 30 хв.', fontsize=11, va='center')
     
     # Дата оновлення
     if last_updated:
