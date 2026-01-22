@@ -177,6 +177,20 @@ def get_queue_name(queue_key):
     """Отримати назву черги за ключем"""
     return QUEUE_MAPPING.get(queue_key, "unknown")
 
+def parse_date_string(date_str):
+    """Парсит DD-MM-YYYY, HH:MM формат від e-svitlo
+    
+    Приклад: "22-01-2026, 12:51" -> datetime(2026, 1, 22, 12, 51, tzinfo=KYIV_TZ)
+    ВИПРАВЛЕННЯ: Замість datetime.fromisoformat() яка не працює з DD-MM-YYYY форматом
+    """
+    try:
+        date_str = date_str.strip()
+        dt = datetime.strptime(date_str, "%d-%m-%Y, %H:%M")
+        return dt.replace(tzinfo=KYIV_TZ)
+    except ValueError as e:
+        log(f"[DATE_PARSE] Error parsing '{date_str}': {e}")
+        raise
+
 def parse_queue(scraper, url, queue_key, queue_idx):
     """Парсити одну чергу"""
     try:
@@ -226,8 +240,8 @@ def parse_queue(scraper, url, queue_key, queue_idx):
 def round_minutes_to_half_hour(minutes):
     """Округлює хвилини до половини години
     
-    < 30 хвилин → 0 (XX:00)
-    >= 30 хвилин → 30 (XX:30)
+    < 30 хвилин -> 0 (XX:00)
+    >= 30 хвилин -> 30 (XX:30)
     """
     return 30 if minutes >= 30 else 0
 
@@ -271,16 +285,15 @@ def transform_to_gpv(all_outages, kyiv_now):
             begin_str = outage['acc_begin']
             end_str = outage['accend_plan']
             
-            # Парсимо ISO datetime
-            # КРИТИЧНО: дані без таймзони, припускаємо Kyiv timezone
-            begin_dt = datetime.fromisoformat(begin_str).replace(tzinfo=KYIV_TZ)
-            end_dt = datetime.fromisoformat(end_str).replace(tzinfo=KYIV_TZ)
+            # ВИПРАВЛЕННЯ: Парсимо DD-MM-YYYY, HH:MM формат від e-svitlo замість ISO
+            begin_dt = parse_date_string(begin_str)
+            end_dt = parse_date_string(end_str)
             
             # Отримуємо дату як Unix timestamp
             date_only = begin_dt.replace(hour=0, minute=0, second=0, microsecond=0)
             unix_ts = int(date_only.timestamp())
             
-            log(f"[TRANSFORM] Outage: {begin_str} → Date TS: {unix_ts}")
+            log(f"[TRANSFORM] Outage: {begin_str} -> Date TS: {unix_ts}")
             
             # ФІЛЬТРУЄМО: залишаємо тільки сьогодні та завтра
             if unix_ts not in [today_ts, tomorrow_ts]:
@@ -341,7 +354,7 @@ def transform_to_gpv(all_outages, kyiv_now):
                     
                     end_slot = hour_to_slot(actual_end_hour)
                     
-                    log(f"[TRANSFORM] {gpv_key} ({unix_ts}): {start_hour:02d}:{start_minute:02d}-{end_hour:02d}:{end_minute:02d} → слоти {start_slot}-{end_slot-1}")
+                    log(f"[TRANSFORM] {gpv_key} ({unix_ts}): {start_hour:02d}:{start_minute:02d}-{end_hour:02d}:{end_minute:02d} -> слоти {start_slot}-{end_slot-1}")
                     
                     # Заповнюємо слоти з "no"
                     for slot in range(start_slot, end_slot):
@@ -349,11 +362,11 @@ def transform_to_gpv(all_outages, kyiv_now):
                             slots[str(slot)] = "no"
                     
                     # Логіка first/second
-                    # 'second': якщо acc_begin має дробову частину (start_minute ≠ 0)
+                    # 'second': якщо acc_begin має дробову частину (start_minute != 0)
                     if start_minute != 0 and start_slot <= 24:
                         slots[str(start_slot)] = "second"
                     
-                    # 'first': якщо accend_plan має дробову частину (end_minute ≠ 0)
+                    # 'first': якщо accend_plan має дробову частину (end_minute != 0)
                     # НЕ враховуємо 23:59:59 (кінець дня)
                     if end_minute != 0 and end_slot - 1 <= 24:
                         if not (end_hour == 23 and end_minute == 59):
@@ -374,9 +387,7 @@ def save_results(all_outages):
     # Отримати поточний час у Kyiv timezone
     kyiv_now = datetime.now(KYIV_TZ)
     
-    # -----------------------------------------------------------
     # ВИКОРИСТОВУЄМО UNIX TIMESTAMP (Integer)
-    # -----------------------------------------------------------
     last_updated_ts = int(kyiv_now.timestamp())
     
     # Текстова дата оновлення для відображення людям (залишається по Києву)
