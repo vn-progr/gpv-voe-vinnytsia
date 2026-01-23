@@ -469,6 +469,7 @@ def save_results(all_outages):
     
     log("[SAVE] Success: Saved to " + file_path)
     log(f"[SAVE] Total dates: {len(fact_data)}, Queues per date: {len(ALL_QUEUE_KEYS)}, Content hash: {content_hash}")
+    return True
 
 def main():
     log("=" * 70)
@@ -487,7 +488,12 @@ def main():
         all_outages.extend(queue_outages)
     
     log("[MAIN] Total outages: " + str(len(all_outages)))
-    save_results(all_outages)
+    
+    if save_results(all_outages):
+        log("[MAIN] Results saved successfully")
+    else:
+        log("[MAIN] ERROR: Results NOT saved - source unavailable")
+        exit(1)
     
     log("=" * 70)
     log("DONE")
