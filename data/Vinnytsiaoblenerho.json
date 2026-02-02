@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1770002366,
+  "lastUpdated": 1770002543,
   "fact": {
     "data": {
       "1769983200": {
@@ -195,8 +195,8 @@
           "6": "no",
           "7": "yes",
           "8": "yes",
-          "9": "yes",
-          "10": "yes",
+          "9": "no",
+          "10": "no",
           "11": "no",
           "12": "no",
           "13": "yes",
@@ -275,8 +275,8 @@
           "8": "no",
           "9": "yes",
           "10": "yes",
-          "11": "yes",
-          "12": "yes",
+          "11": "no",
+          "12": "no",
           "13": "no",
           "14": "no",
           "15": "yes",
@@ -632,7 +632,7 @@
         }
       }
     },
-    "update": "02.02.2026 05:19",
+    "update": "02.02.2026 05:22",
     "today": 1769983200
   },
   "preset": {
@@ -659,19 +659,19 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "02.02.2026 05:19"
+    "updateFact": "02.02.2026 05:22"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1770002366,
+    "at": 1770002543,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
   "meta": {
     "schemaVersion": "1.0.0",
-    "contentHash": "311d7c48ad97e4516e996fe31b005c46df374cdb1c2984814cff3337ebb04294"
+    "contentHash": "4f31693f47cc22aebb30f68a7d3eb943e6fb6003dcd5948ebd37679199139da6"
   }
 }
