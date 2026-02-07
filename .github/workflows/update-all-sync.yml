@@ -1,4 +1,4 @@
-name: Update Data and Images Synchronously
+name: 🔌 Update Vinnytsia Data & Images
 
 on:
   # schedule:
@@ -13,79 +13,70 @@ on:
 
 permissions:
   contents: write
-
+  
 jobs:
   update-all:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 🐍 Setup Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # Використовуємо 3.11 для сумісності з парсером
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Встановлюємо залежності для ВСІХ скриптів відразу
-          pip install cloudscraper matplotlib numpy
+          pip install requests beautifulsoup4 lxml matplotlib numpy pillow
 
-      - name: Run Parser (Generate JSON)
-        env:
-          # Ваші секрети для парсера
-          ESVITLO_LOGIN: ${{ secrets.ESVITLO_LOGIN }}
-          ESVITLO_PASSWORD: ${{ secrets.ESVITLO_PASSWORD }}
-          ESVITLO_EIC_1_1: ${{ secrets.ESVITLO_EIC_1_1 }}
-          ESVITLO_EIC_1_2: ${{ secrets.ESVITLO_EIC_1_2 }}
-          ESVITLO_EIC_2_1: ${{ secrets.ESVITLO_EIC_2_1 }}
-          ESVITLO_EIC_2_2: ${{ secrets.ESVITLO_EIC_2_2 }}
-          ESVITLO_EIC_3_1: ${{ secrets.ESVITLO_EIC_3_1 }}
-          ESVITLO_EIC_3_2: ${{ secrets.ESVITLO_EIC_3_2 }}
-          ESVITLO_EIC_4_1: ${{ secrets.ESVITLO_EIC_4_1 }}
-          ESVITLO_EIC_4_2: ${{ secrets.ESVITLO_EIC_4_2 }}
-          ESVITLO_EIC_5_1: ${{ secrets.ESVITLO_EIC_5_1 }}
-          ESVITLO_EIC_5_2: ${{ secrets.ESVITLO_EIC_5_2 }}
-          ESVITLO_EIC_6_1: ${{ secrets.ESVITLO_EIC_6_1 }}
-          ESVITLO_EIC_6_2: ${{ secrets.ESVITLO_EIC_6_2 }}
+      - name: 🔄 Parse BezSvitla (scripts/parser.py)
         run: |
-          # Запускаємо парсер. Він оновить файл data/Vinnytsiaoblenerho.json ЛОКАЛЬНО
+          echo "🚀 Running scripts/parser.py..."
           python scripts/parser.py
+          echo "✅ JSON ready: data/Vinnytsiaoblenerho.json"
+          ls -la data/ || mkdir -p data
 
-      - name: Generate Images from New Data
+      - name: 🖼️ Generate Images from New Data
         run: |
-          # Визначаємо шлях до щойно оновленого JSON
           JSON_FILE="data/Vinnytsiaoblenerho.json"
           OUT_DIR="images/Vinnytsiaoblenerho"
           
-          echo "[INFO] JSON file prepared. Starting image generation..."
+          echo "🎨 Starting image generation..."
+          mkdir -p "$OUT_DIR"
           
-          # 1. Генеруємо окремі графіки
-          python scripts/render_png.py --json "$JSON_FILE" --out "$OUT_DIR"
+          # Ваші render скрипти (якщо є)
+          if [ -f "scripts/render_png.py" ]; then
+            echo "📊 Rendering per-queue charts..."
+            python scripts/render_png.py --json "$JSON_FILE" --out "$OUT_DIR"
+          fi
           
-          # 2. Генеруємо загальний графік на сьогодні
-          python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$OUT_DIR"
+          if [ -f "scripts/render_png_all_today.py" ]; then
+            echo "📊 Rendering TODAY overview..."
+            python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$OUT_DIR"
+          fi
           
-          # 3. Генеруємо загальний графік на завтра
-          python scripts/render_png_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR"
+          if [ -f "scripts/render_png_all_tomorrow.py" ]; then
+            echo "📊 Rendering TOMORROW overview..."
+            python scripts/render_png_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR"
+          fi
 
-      - name: Commit and Push All Changes
+      - name: 📤 Commit & Push All Changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Додаємо JSON файл (він міг змінитися)
-          git add data/Vinnytsiaoblenerho.json
+          # Додаємо JSON
+          git add data/Vinnytsiaoblenerho.json || echo "No JSON changes"
           
-          # Додаємо папку з картинками (вони могли змінитися або додатися нові)
-          git add images/Vinnytsiaoblenerho/
+          # Додаємо картинки
+          git add images/Vinnytsiaoblenerho/* || mkdir -p images/Vinnytsiaoblenerho
           
-          # Перевіряємо статус - чи є що комітити
-          if git diff --quiet --cached; then
-            echo "[INFO] No changes detected in data or images. Skipping commit."
-          else
-            echo "[INFO] Changes detected. Committing..."
-            # Єдиний коміт для всього
-            git commit -m "Sync update: Data & Images $(date)"
+          # Коміт тільки при змінах
+          if ! git diff --quiet --cached; then
+            git commit -m "🔄 Sync: Data & Images [$(date +%H:%M)]"
             git push
+            echo "✅ Pushed to main!"
+          else
+            echo "ℹ️ No changes → Skip commit"
           fi
