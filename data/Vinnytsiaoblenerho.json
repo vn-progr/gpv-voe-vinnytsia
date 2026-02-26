@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1772144018,
+  "lastUpdated": 1772144194,
   "fact": {
     "data": {
       "1772143200": {
@@ -109,30 +109,30 @@
           "24": "yes"
         },
         "GPV3.1": {
-          "1": "yes",
-          "2": "yes",
-          "3": "yes",
-          "4": "yes",
-          "5": "no",
-          "6": "no",
+          "1": "no",
+          "2": "no",
+          "3": "no",
+          "4": "no",
+          "5": "yes",
+          "6": "yes",
           "7": "yes",
           "8": "yes",
-          "9": "yes",
-          "10": "yes",
-          "11": "no",
-          "12": "no",
-          "13": "yes",
-          "14": "yes",
-          "15": "yes",
-          "16": "yes",
-          "17": "no",
-          "18": "no",
+          "9": "no",
+          "10": "no",
+          "11": "yes",
+          "12": "yes",
+          "13": "no",
+          "14": "no",
+          "15": "no",
+          "16": "no",
+          "17": "yes",
+          "18": "yes",
           "19": "yes",
           "20": "yes",
-          "21": "yes",
-          "22": "yes",
-          "23": "no",
-          "24": "no"
+          "21": "no",
+          "22": "no",
+          "23": "yes",
+          "24": "yes"
         },
         "GPV3.2": {
           "1": "yes",
@@ -632,7 +632,7 @@
         }
       }
     },
-    "update": "27.02.2026 00:13",
+    "update": "27.02.2026 00:16",
     "today": 1772143200
   },
   "preset": {
@@ -659,19 +659,19 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "27.02.2026 00:13"
+    "updateFact": "27.02.2026 00:16"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1772144018,
+    "at": 1772144194,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
   "meta": {
     "schemaVersion": "1.0.0",
-    "contentHash": "f3482051d9fd1d6ea01bfea5977976da1c40afe2bedbc2ae7146693d9f41a81a"
+    "contentHash": "3bff4ca971a8c9694e547d4a6815ca13904d5e3bee22ea3e3dabef1aacb87cc8"
   }
 }
