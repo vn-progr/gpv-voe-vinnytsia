@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1775748863,
+  "lastUpdated": 1775749041,
   "fact": {
     "data": {
       "1775685600": {
@@ -77,8 +77,8 @@
           "18": "yes",
           "19": "yes",
           "20": "yes",
-          "21": "yes",
-          "22": "yes",
+          "21": "no",
+          "22": "no",
           "23": "yes",
           "24": "yes"
         },
@@ -103,8 +103,8 @@
           "18": "yes",
           "19": "yes",
           "20": "yes",
-          "21": "first",
-          "22": "yes",
+          "21": "no",
+          "22": "no",
           "23": "yes",
           "24": "yes"
         },
@@ -232,7 +232,7 @@
           "17": "yes",
           "18": "yes",
           "19": "yes",
-          "20": "yes",
+          "20": "no",
           "21": "yes",
           "22": "yes",
           "23": "yes",
@@ -258,7 +258,7 @@
           "17": "yes",
           "18": "yes",
           "19": "yes",
-          "20": "yes",
+          "20": "no",
           "21": "yes",
           "22": "yes",
           "23": "yes",
@@ -632,7 +632,7 @@
         }
       }
     },
-    "update": "09.04.2026 17:34",
+    "update": "09.04.2026 17:37",
     "today": 1775685600
   },
   "preset": {
@@ -659,19 +659,19 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "09.04.2026 17:34"
+    "updateFact": "09.04.2026 17:37"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1775748863,
+    "at": 1775749041,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
   "meta": {
     "schemaVersion": "1.0.0",
-    "contentHash": "7d83ce4970d9b46bbafd26cf088e2bcbed24859eb1ac84363c878feab929ff6e"
+    "contentHash": "003710ad989e7593881c7d07bc372ca70d04625e5c03c454c7371439facecc83"
   }
 }
