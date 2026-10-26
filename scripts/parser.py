@@ -81,12 +81,15 @@ def parse_html_schedule(html):
     """
     soup = BeautifulSoup(html, 'html.parser')
     slots = {str(i): "yes" for i in range(1, 25)}
-    li_el = soup.select('div.card-body ul li')
+    slot_elements = soup.select('div.bz-schedule-slot')
 
-    for li in li_el:
-        ts = li.find('span')
-        icon = li.select_one('.icon-off, .icon-on')
-        if not ts or not icon:
+    for el in slot_elements:
+        is_off = 'bz-schedule-slot--off' in el.get('class', [])
+        if not is_off:
+            continue
+
+        ts = el.select_one('.bz-schedule-slot__time')
+        if not ts:
             continue
 
         t = parse_time_slot(ts.get_text(strip=True))
@@ -94,9 +97,6 @@ def parse_html_schedule(html):
             continue
 
         start_hour, start_minute, end_hour, end_minute = t
-        is_off = bool(li.select_one('.icon-off'))
-        if not is_off:
-            continue
 
         # Стартовий слот
         start_slot = hour_to_slot(start_hour)
@@ -114,14 +114,14 @@ def parse_html_schedule(html):
             if 1 <= slot <= 24:
                 slots[str(slot)] = "no"
 
-        # Коригуємо перший слот якщо старт не з 00 хв
+        # Коригуємо перший слот, якщо старт не з 00 хв
         if start_minute != 0 and start_slot <= 24:
             if start_minute >= 30:
                 slots[str(start_slot)] = "second"
             else:
                 slots[str(start_slot)] = "first"
 
-        # Коригуємо останній слот якщо кінець не на 00 хв
+        # Коригуємо останній слот, якщо кінець не на 00 хв
         if end_minute != 0:
             last_full_hour = actual_end_hour - 1
             last_slot = hour_to_slot(last_full_hour)
