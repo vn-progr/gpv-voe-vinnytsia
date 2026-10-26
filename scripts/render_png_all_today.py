@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 import hashlib
 
 import matplotlib
-matplotlib.use('Agg')  # Для роботи в headless режимі (наприклад, на GitHub Actions)
+matplotlib.use('Agg')
 
 try:
     import matplotlib.pyplot as plt
@@ -91,7 +91,15 @@ def render_all_schedules(json_path, out_path=None, force=False):
     fact_data = data.get('fact', {}).get('data', {})
     sch_names = data.get('preset', {}).get('sch_names', {})
     last_updated = data.get('fact', {}).get('update', '')
-    today_ts = str(data.get('fact', {}).get('today'))
+
+    if not fact_data:
+        print("[SKIP] gpv-all-today.png (fact.data is empty)")
+        return
+
+    # Динамічне визначення timestamp для 'сьогодні'
+    today_ts = str(data.get('fact', {}).get('today', ''))
+    if today_ts not in fact_data:
+        today_ts = sorted(list(fact_data.keys()))[0]
 
     today_data = fact_data.get(today_ts, {})
 
@@ -140,7 +148,7 @@ def render_all_schedules(json_path, out_path=None, force=False):
     num_schedules = len(gpv_keys)
 
     if num_schedules == 0:
-        print("[SKIP] gpv-all-today.png (No GPV schedules found)")
+        print(f"[SKIP] gpv-all-today.png (No GPV schedules found in ts {today_ts})")
         return
 
     print(f"[GENERATE] gpv-all-today.png for {today_date.strftime('%d.%m.%Y')}")
@@ -153,8 +161,6 @@ def render_all_schedules(json_path, out_path=None, force=False):
 
     table_width = label_w + 24 * cell_w
     table_height = header_h + num_schedules * cell_h
-
-    # Динамічна висота рисунка залежно від кількості черг
     fig_height = 2.0 + (num_schedules * 0.45)
 
     fig, ax = plt.subplots(figsize=(18, fig_height), dpi=160)
@@ -177,10 +183,82 @@ def render_all_schedules(json_path, out_path=None, force=False):
 
     y_pos += header_h
 
-    # === РЯДКИ З ЧЕРГАМИ (ВІД 1.1 ДО 6.2) ===
+    # === РЯДКИ З ЧЕРГАМИ ===
     for gpv_key in gpv_keys:
         slots = today_data.get(gpv_key, {str(i): 'yes' for i in range(1, 25)})
         queue_name = sch_names.get(gpv_key, gpv_key)
 
         # Ліва клітинка з назвою черги
         rect = Rectangle((0, y_pos), label_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_LABEL)
+        ax.add_patch(rect)
+        ax.text(label_w/2, y_pos + cell_h/2, queue_name, fontsize=11, ha='center', va='center', fontweight='bold', color=TEXT_DARK)
+
+        for i, slot_num in enumerate(SLOTS):
+            x = label_w + i * cell_w
+            state = slots.get(str(slot_num), 'yes')
+
+            # Фоновий білий прямокутник
+            rect = Rectangle((x, y_pos), cell_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor=WHITE)
+            ax.add_patch(rect)
+
+            # Відмальовка вимкнень (повноцінні або попівгодини)
+            if state == 'no':
+                ax.add_patch(Rectangle((x, y_pos), cell_w, cell_h, linewidth=0, facecolor=ORANGE))
+            elif state == 'first':
+                ax.add_patch(Rectangle((x, y_pos), cell_w/2, cell_h, linewidth=0, facecolor=ORANGE))
+            elif state == 'second':
+                ax.add_patch(Rectangle((x + cell_w/2, y_pos), cell_w/2, cell_h, linewidth=0, facecolor=ORANGE))
+
+            # Контур клітинки
+            ax.add_patch(Rectangle((x, y_pos), cell_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor='none'))
+
+        y_pos += cell_h
+
+    ax.set_xlim(0, table_width)
+    ax.set_ylim(0, table_height)
+    ax.invert_yaxis()
+    ax.axis('off')
+
+    fig.text(0.05, 0.96, f'Графік відключень для Вінницька область на {today_str}',
+             fontsize=17, fontweight='bold', color=TEXT_DARK)
+
+    # Легенда
+    legend_y = 0.02
+    fig.patches.clear()
+
+    rect1 = Rectangle((0.08, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
+    fig.patches.append(rect1)
+    fig.text(0.12, legend_y + 0.015, 'Світло є', fontsize=11, va='center', color=TEXT_DARK)
+
+    rect2 = Rectangle((0.26, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=ORANGE, transform=fig.transFigure)
+    fig.patches.append(rect2)
+    fig.text(0.30, legend_y + 0.015, 'Світла нема', fontsize=11, va='center', color=TEXT_DARK)
+
+    rect3_bg = Rectangle((0.45, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
+    rect3_fill = Rectangle((0.45, legend_y), 0.015, 0.035, linewidth=0, facecolor=ORANGE, transform=fig.transFigure)
+    fig.patches.extend([rect3_bg, rect3_fill])
+    fig.text(0.49, legend_y + 0.015, 'Світла нема перші 30 хв.', fontsize=11, va='center', color=TEXT_DARK)
+
+    rect4_bg = Rectangle((0.68, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
+    rect4_fill = Rectangle((0.68 + 0.015, legend_y), 0.015, 0.035, linewidth=0, facecolor=ORANGE, transform=fig.transFigure)
+    fig.patches.extend([rect4_bg, rect4_fill])
+    fig.text(0.72, legend_y + 0.015, 'Світла нема другі 30 хв.', fontsize=11, va='center', color=TEXT_DARK)
+
+    if last_updated:
+        fig.text(0.95, 0.005, f'Оновлено {last_updated}', fontsize=10, ha='right', style='italic', color='#555555')
+
+    plt.savefig(output_file, facecolor=WHITE, dpi=160, bbox_inches='tight', pad_inches=0.15)
+    print(f"[OK] Saved {output_file}")
+
+    save_hash(hash_dir, new_hash)
+    save_date(hash_dir, today_date_code)
+    plt.close()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--json', required=True, help='Шлях до JSON файлу')
+    parser.add_argument('--out', default=None, help='Шлях до вихідної папки')
+    parser.add_argument('--force', action='store_true', help='Примусова регенерація')
+    args = parser.parse_args()
+
+    render_all_schedules(json_path=args.json, out_path=args.out, force=args.force)
