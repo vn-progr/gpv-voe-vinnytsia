@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Schedule PNG Renderer - зведена таблиця усіх графіків на завтра
-Генерує PNG тільки якщо дані змінилися (за хешем) АБО якщо змінилася дата
-Хеші та дати зберігаються в папці hash/
+Schedule PNG Renderer - класична зведена таблиця усіх графіків на завтра
+Оптимізовано для Telegram (читабельність на смартфонах)
 """
 
 import json
@@ -17,22 +16,21 @@ matplotlib.use('Agg')  # Для роботи в headless режимі (напр�
 
 try:
     import matplotlib.pyplot as plt
-    from matplotlib.patches import FancyBboxPatch, Rectangle
+    from matplotlib.patches import Rectangle
 except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-# Палітра кольорів з високим контрастом
-BG_COLOR = '#FFFFFF'
-HEADER_BG = '#E2E8F0'
-LABEL_BG = '#FEF3C7'
-CELL_EMPTY = '#F1F5F9'
-CELL_BORDER = '#94A3B8'
-ORANGE = '#F95721'
-TEXT_DARK = '#0F172A'
+# Кольори
+ORANGE = '#FF8C00'
+WHITE = '#FFFFFF'
+GRAY_HEADER = '#EAEAEA'
+GRAY_LABEL = '#F2F2F2'
+BORDER = '#707070'
+TEXT_DARK = '#000000'
 
 SLOTS = list(range(1, 25))
-HOURS_TEXT = [f'{i:02d}-{i+1:02d}' for i in range(24)]
+HOURS_TEXT = [f'{i:02d}\n-\n{i+1:02d}' for i in range(24)]
 
 # Таймзона Київ (UTC+2)
 KYIV_TZ = timezone(timedelta(hours=2))
@@ -83,42 +81,6 @@ def save_date(hash_dir, date_str):
             f.write(date_str)
     except Exception as e:
         print(f"[WARN] Could not save date file {date_file}: {e}")
-
-def draw_rounded_slot(ax, x, y, width, height, state, r=0.15):
-    """Малює клітинку із чіткою обводкою для мобільних екранів"""
-    bg = FancyBboxPatch((x, y), width, height,
-                        boxstyle=f"round,pad=0,rounding_size={r}",
-                        facecolor=CELL_EMPTY, edgecolor=CELL_BORDER, linewidth=1.2)
-    ax.add_patch(bg)
-
-    if state == 'no':
-        fill = FancyBboxPatch((x, y), width, height,
-                              boxstyle=f"round,pad=0,rounding_size={r}",
-                              facecolor=ORANGE, edgecolor='none')
-        ax.add_patch(fill)
-
-    elif state == 'first':
-        fill = FancyBboxPatch((x, y), width, height,
-                              boxstyle=f"round,pad=0,rounding_size={r}",
-                              facecolor=ORANGE, edgecolor='none')
-        ax.add_patch(fill)
-        clip_right = Rectangle((x + width/2, y), width/2, height,
-                               facecolor=CELL_EMPTY, edgecolor='none')
-        ax.add_patch(clip_right)
-
-    elif state == 'second':
-        fill = FancyBboxPatch((x, y), width, height,
-                              boxstyle=f"round,pad=0,rounding_size={r}",
-                              facecolor=ORANGE, edgecolor='none')
-        ax.add_patch(fill)
-        clip_left = Rectangle((x, y), width/2, height,
-                              facecolor=CELL_EMPTY, edgecolor='none')
-        ax.add_patch(clip_left)
-
-    border = FancyBboxPatch((x, y), width, height,
-                            boxstyle=f"round,pad=0,rounding_size={r}",
-                            facecolor='none', edgecolor=CELL_BORDER, linewidth=1.2)
-    ax.add_patch(border)
 
 def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
     """Рендерити всі графіки на завтра в одну таблицю"""
@@ -185,89 +147,103 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
 
     print(f"[GENERATE] gpv-all-tomorrow.png for {tomorrow_date.strftime('%d.%m.%Y')}")
 
-    # Геометрія таблиці
-    cell_w = 0.95
-    cell_h = 0.65
+    # Розміри клітинок та пропорції
+    cell_w = 1.0
+    cell_h = 0.55
     label_w = 2.4
-    header_h = 1.7
-    gap = 0.08
+    header_h = 1.3
 
-    total_width = label_w + 24 * (cell_w + gap)
-    total_height = header_h + num_schedules * (cell_h + gap)
+    table_width = label_w + 24 * cell_w
+    table_height = header_h + num_schedules * cell_h
 
-    fig_height = 2.5 + (num_schedules * 0.75)
+    fig_height = 2.0 + (num_schedules * 0.45)
 
-    fig, ax = plt.subplots(figsize=(16, fig_height), dpi=180)
-    fig.patch.set_facecolor(BG_COLOR)
-    ax.set_facecolor(BG_COLOR)
+    fig, ax = plt.subplots(figsize=(18, fig_height), dpi=160)
+    fig.patch.set_facecolor(WHITE)
+    ax.set_facecolor(WHITE)
 
-    y_pos = 0.1
+    y_pos = 0
 
-    # РЯДКИ з ГРАФІКАМИ
-    for gpv_key in reversed(gpv_keys):
+    # === РЯДОК 0: Шапка часу (ЗВЕРХУ) ===
+    rect = Rectangle((0, y_pos), label_w, header_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_HEADER)
+    ax.add_patch(rect)
+    ax.text(label_w/2, y_pos + header_h/2, 'Черга', fontsize=12, ha='center', va='center', fontweight='bold', color=TEXT_DARK)
+
+    for i in range(24):
+        x = label_w + i * cell_w
+        rect = Rectangle((x, y_pos), cell_w, header_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_HEADER)
+        ax.add_patch(rect)
+        ax.text(x + cell_w/2, y_pos + header_h/2, HOURS_TEXT[i], fontsize=10, ha='center', va='center',
+                fontweight='bold', color=TEXT_DARK, linespacing=1.2)
+
+    y_pos += header_h
+
+    # === РЯДКИ З ЧЕРГАМИ (ВІД 1.1 ДО 6.2) ===
+    for gpv_key in gpv_keys:
         slots = tomorrow_data.get(gpv_key, {str(i): 'yes' for i in range(1, 25)})
         queue_name = sch_names.get(gpv_key, gpv_key)
 
-        rect = FancyBboxPatch((0, y_pos), label_w - gap, cell_h,
-                              boxstyle="round,pad=0,rounding_size=0.18",
-                              facecolor=LABEL_BG, edgecolor=CELL_BORDER, linewidth=1.5)
+        rect = Rectangle((0, y_pos), label_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_LABEL)
         ax.add_patch(rect)
-        ax.text((label_w - gap)/2, y_pos + cell_h/2, queue_name, fontsize=13,
-                ha='center', va='center', fontweight='bold', color=TEXT_DARK)
+        ax.text(label_w/2, y_pos + cell_h/2, queue_name, fontsize=11, ha='center', va='center', fontweight='bold', color=TEXT_DARK)
 
         for i, slot_num in enumerate(SLOTS):
-            x = label_w + i * (cell_w + gap)
-            draw_rounded_slot(ax, x, y_pos, cell_w, cell_h, slots.get(str(slot_num), 'yes'))
+            x = label_w + i * cell_w
+            state = slots.get(str(slot_num), 'yes')
 
-        y_pos += cell_h + gap
+            rect = Rectangle((x, y_pos), cell_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor=WHITE)
+            ax.add_patch(rect)
 
-    # РЯДОК 0: Часові проміжки (зверху)
-    rect = FancyBboxPatch((0, y_pos), label_w - gap, header_h,
-                          boxstyle="round,pad=0,rounding_size=0.18",
-                          facecolor=HEADER_BG, edgecolor=CELL_BORDER, linewidth=1.5)
-    ax.add_patch(rect)
-    ax.text((label_w - gap)/2, y_pos + header_h/2, 'Черга', fontsize=13,
-            ha='center', va='center', fontweight='bold', color=TEXT_DARK)
+            if state == 'no':
+                ax.add_patch(Rectangle((x, y_pos), cell_w, cell_h, linewidth=0, facecolor=ORANGE))
+            elif state == 'first':
+                ax.add_patch(Rectangle((x, y_pos), cell_w/2, cell_h, linewidth=0, facecolor=ORANGE))
+            elif state == 'second':
+                ax.add_patch(Rectangle((x + cell_w/2, y_pos), cell_w/2, cell_h, linewidth=0, facecolor=ORANGE))
 
-    for i in range(24):
-        x = label_w + i * (cell_w + gap)
-        rect = FancyBboxPatch((x, y_pos), cell_w, header_h,
-                              boxstyle="round,pad=0,rounding_size=0.18",
-                              facecolor=HEADER_BG, edgecolor=CELL_BORDER, linewidth=1.5)
-        ax.add_patch(rect)
-        ax.text(x + cell_w/2, y_pos + header_h/2, HOURS_TEXT[i], fontsize=13,
-                ha='center', va='center', fontweight='bold', color=TEXT_DARK, rotation=90)
+            ax.add_patch(Rectangle((x, y_pos), cell_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor='none'))
 
-    ax.set_xlim(-0.2, total_width + 0.2)
-    ax.set_ylim(-0.8, total_height + 1.4)
+        y_pos += cell_h
+
+    ax.set_xlim(0, table_width)
+    ax.set_ylim(0, table_height)
     ax.invert_yaxis()
     ax.axis('off')
 
-    # Заголовок
-    fig.text(0.04, 0.95, f'Графік відключень на завтра (Вінницька обл.) — {tomorrow_str}',
-             fontsize=18, fontweight='bold', color=TEXT_DARK)
+    # === ХЕДЕР ЗГОРИ ===
+    fig.text(0.05, 0.96, f'Графік відключень на завтра (Вінницька обл.) — {tomorrow_str}',
+             fontsize=17, fontweight='bold', color=TEXT_DARK)
 
-    # Легенда під таблицею
-    leg_y = -0.6
-    spacing = 0.23
+    # === ЛЕГЕНДА ЗНИЗУ ПІД ТАБЛИЦЕЮ ===
+    legend_y = 0.02
+    fig.patches.clear()
 
-    draw_rounded_slot(ax, 0, leg_y, 0.7, 0.45, 'yes')
-    ax.text(0.85, leg_y + 0.22, 'Світло є', fontsize=12, va='center', color=TEXT_DARK, fontweight='bold')
+    # 1. Світло є
+    rect1 = Rectangle((0.08, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
+    fig.patches.append(rect1)
+    fig.text(0.12, legend_y + 0.015, 'Світло є', fontsize=11, va='center', color=TEXT_DARK)
 
-    draw_rounded_slot(ax, 0 + spacing * 7.5, leg_y, 0.7, 0.45, 'no')
-    ax.text(0.85 + spacing * 7.5, leg_y + 0.22, 'Без світла', fontsize=12, va='center', color=TEXT_DARK, fontweight='bold')
+    # 2. Світла нема
+    rect2 = Rectangle((0.26, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=ORANGE, transform=fig.transFigure)
+    fig.patches.append(rect2)
+    fig.text(0.30, legend_y + 0.015, 'Світла нема', fontsize=11, va='center', color=TEXT_DARK)
 
-    draw_rounded_slot(ax, 0 + spacing * 15, leg_y, 0.7, 0.45, 'first')
-    ax.text(0.85 + spacing * 15, leg_y + 0.22, 'Нема перші 30 хв', fontsize=12, va='center', color=TEXT_DARK, fontweight='bold')
+    # 3. Перші 30 хв
+    rect3_bg = Rectangle((0.45, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
+    rect3_fill = Rectangle((0.45, legend_y), 0.015, 0.035, linewidth=0, facecolor=ORANGE, transform=fig.transFigure)
+    fig.patches.extend([rect3_bg, rect3_fill])
+    fig.text(0.49, legend_y + 0.015, 'Світла нема перші 30 хв.', fontsize=11, va='center', color=TEXT_DARK)
 
-    draw_rounded_slot(ax, 0 + spacing * 23, leg_y, 0.7, 0.45, 'second')
-    ax.text(0.85 + spacing * 23, leg_y + 0.22, 'Нема другі 30 хв', fontsize=12, va='center', color=TEXT_DARK, fontweight='bold')
+    # 4. Другі 30 хв
+    rect4_bg = Rectangle((0.68, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
+    rect4_fill = Rectangle((0.68 + 0.015, legend_y), 0.015, 0.035, linewidth=0, facecolor=ORANGE, transform=fig.transFigure)
+    fig.patches.extend([rect4_bg, rect4_fill])
+    fig.text(0.72, legend_y + 0.015, 'Світла нема другі 30 хв.', fontsize=11, va='center', color=TEXT_DARK)
 
     if last_updated:
-        ax.text(total_width, leg_y + 0.22, f'Оновлено: {last_updated}', fontsize=11,
-                ha='right', va='center', style='italic', color='#64748B')
+        fig.text(0.95, 0.005, f'Оновлено {last_updated}', fontsize=10, ha='right', style='italic', color='#555555')
 
-    plt.savefig(output_file, facecolor=BG_COLOR, dpi=180, bbox_inches='tight', pad_inches=0.25)
+    plt.savefig(output_file, facecolor=WHITE, dpi=160, bbox_inches='tight', pad_inches=0.15)
     print(f"[OK] Saved {output_file}")
 
     save_hash(hash_dir, new_hash)
