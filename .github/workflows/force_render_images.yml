@@ -1,20 +1,19 @@
 name: 🎨 Force Render All PNG Images
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Дозволяє запускати вручну з вкладки Actions у GitHub
   push:
     branches:
       - main
     paths:
-      - 'data/Vinnytsiaoblenerho.json'
+      - 'data/Vinnytsiaoblenerho.json' # Автозапуск при оновленні JSON даних
 
-# Надаємо права на запис у вміст репозиторію
 permissions:
-  contents: write
+  contents: write # Права на коміт та пуш у репозиторій
 
 jobs:
   render_images:
-    name: Generate PNGs (Force Render)
+    name: Generate All PNG Schedules
     runs-on: ubuntu-latest
 
     steps:
@@ -42,26 +41,19 @@ jobs:
           echo "🎨 Starting forced image generation..."
           mkdir -p "$OUT_DIR"
           
-          if [ -f "scripts/render_png.py" ]; then
-            echo "📊 Rendering per-queue charts..."
-            python scripts/render_png.py --json "$JSON_FILE" --out "$OUT_DIR" --force
-          fi
+          # 1. Генерація 12 окремих картинок для кожної черги
+          echo "📊 Rendering 12 per-queue charts..."
+          python scripts/render_png.py --json "$JSON_FILE" --out "$OUT_DIR" --force
           
-          if [ -f "scripts/render_all_today.py" ]; then
-            echo "📊 Rendering TODAY overview..."
-            python scripts/render_all_today.py --json "$JSON_FILE" --out "$OUT_DIR" --force
-          elif [ -f "scripts/render_png_all_today.py" ]; then
-            echo "📊 Rendering TODAY overview..."
-            python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$OUT_DIR" --force
-          fi
+          # 2. Генерація gpv-all-today.png
+          echo "📊 Rendering TODAY overview..."
+          python scripts/render_all_today.py --json "$JSON_FILE" --out "$OUT_DIR" --force
           
-          if [ -f "scripts/render_all_tomorrow.py" ]; then
-            echo "📊 Rendering TOMORROW overview..."
-            python scripts/render_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR" --force
-          elif [ -f "scripts/render_png_all_tomorrow.py" ]; then
-            echo "📊 Rendering TOMORROW overview..."
-            python scripts/render_png_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR" --force
-          fi
+          # 3. Генерація gpv-all-tomorrow.png
+          echo "📊 Rendering TOMORROW overview..."
+          python scripts/render_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR" --force
+          
+          echo "✅ All 14 images generated in $OUT_DIR"
 
       - name: 🚀 Commit & Push Generated Images
         run: |
@@ -73,7 +65,8 @@ jobs:
           if git diff-index --quiet HEAD; then
             echo "ℹ️ No image changes detected to commit."
           else
-            git commit -m "🎨 Force render: updated all PNG schedule images"
-            git push
-            echo "✅ Successfully pushed updated images to main!"
+            git commit -m "🎨 Force render: updated all 14 PNG schedule images"
+            git pull --rebase origin main
+            git push origin main
+            echo "✅ Successfully pushed all updated images to main!"
           fi
