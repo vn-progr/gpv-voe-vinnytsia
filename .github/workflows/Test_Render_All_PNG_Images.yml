@@ -1,38 +1,35 @@
-name: 🧪 Test Render All PNG Images
+name: 🧪 Test Render (Artifacts Only)
 
 on:
-  workflow_dispatch:
-
-permissions:
-  contents: write
+  workflow_dispatch: # Ручний запуск з вкладки Actions
 
 jobs:
-  render_test_images:
-    name: Generate Test PNGs
+  test_render:
+    name: Generate & Upload Test PNGs
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Dependencies
+      - name: 📦 Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install matplotlib numpy requests beautifulsoup4
 
-      - name: Render Test PNGs to Test Directory
+      - name: 🎨 Render PNGs to Test Directory
         run: |
           set -e
           JSON_FILE="data/Vinnytsiaoblenerho.json"
           TEST_DIR="images/test"
           
-          echo "🧹 Cleaning previous test images..."
+          echo "🧹 Cleaning test directory..."
           rm -rf "$TEST_DIR"
           mkdir -p "$TEST_DIR"
           
@@ -43,28 +40,13 @@ jobs:
           python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$TEST_DIR" --force
           
           echo "🎨 3/3 Rendering TOMORROW test overview..."
-          python scripts/render_png_all_tomorrow.py --json "$TEST_DIR" --out "$TEST_DIR" --force
+          python scripts/render_png_all_tomorrow.py --json "$JSON_FILE" --out "$TEST_DIR" --force
           
-          echo "✅ Test PNGs successfully generated in $TEST_DIR!"
+          echo "✅ All 14 test PNGs successfully created in $TEST_DIR!"
 
-      - name: Commit and Push Test Images
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Зараховуємо ТІЛЬКИ тестову папку images/test
-          git add images/test/
-          
-          if git diff-index --quiet HEAD; then
-            echo "No image changes detected to commit."
-          else
-            git commit -m "🧪 Test render: updated PNGs in images/test"
-            
-            # Скидаємо будь-які випадкові зміни в інших папках
-            git checkout -- .
-            git clean -fd
-            
-            git pull --rebase origin main
-            git push origin main
-            echo "Successfully pushed test PNGs to images/test!"
-          fi
+      - name: 📦 Upload Images as Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-test-schedules
+          path: images/test/*.png
+          retention-days: 1
