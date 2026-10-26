@@ -1,87 +1,3 @@
-#!/usr/bin/env python3
-"""
-Schedule PNG Renderer - класична зведена таблиця усіх графіків на сьогодні
-Оптимізовано для Telegram (читабельність на смартфонах)
-"""
-
-import json
-import argparse
-from pathlib import Path
-import sys
-from datetime import datetime, timezone, timedelta
-import hashlib
-
-import matplotlib
-matplotlib.use('Agg')
-
-try:
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-except ImportError:
-    print("ERROR: pip install matplotlib")
-    sys.exit(1)
-
-# Кольори
-ORANGE = '#FF8C00'
-WHITE = '#FFFFFF'
-GRAY_HEADER = '#EAEAEA'
-GRAY_LABEL = '#F2F2F2'
-BORDER = '#707070'
-TEXT_DARK = '#000000'
-
-SLOTS = list(range(1, 25))
-HOURS_TEXT = [f'{i:02d}\n-\n{i+1:02d}' for i in range(24)]
-
-# Таймзона Київ (UTC+2)
-KYIV_TZ = timezone(timedelta(hours=2))
-
-def calculate_all_today_hash(today_data):
-    """Розраховує SHA256 хеш всіх даних на сьогодні"""
-    data_str = json.dumps(today_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(data_str.encode()).hexdigest()
-
-def load_previous_hash(hash_dir):
-    """Завантажує попередній хеш з папки hash/"""
-    hash_file = hash_dir / 'gpv-all-today.hash'
-    if hash_file.exists():
-        try:
-            with open(hash_file, 'r', encoding='utf-8') as f:
-                return f.read().strip()
-        except Exception as e:
-            print(f"[WARN] Could not read hash file {hash_file}: {e}")
-    return None
-
-def load_previous_date(hash_dir):
-    """Завантажує попередню дату з файлу дати"""
-    date_file = hash_dir / 'gpv-all-today.date'
-    if date_file.exists():
-        try:
-            with open(date_file, 'r', encoding='utf-8') as f:
-                return f.read().strip()
-        except Exception as e:
-            print(f"[WARN] Could not read date file {date_file}: {e}")
-    return None
-
-def save_hash(hash_dir, data_hash):
-    """Зберігає хеш даних у папку hash/"""
-    hash_dir.mkdir(parents=True, exist_ok=True)
-    hash_file = hash_dir / 'gpv-all-today.hash'
-    try:
-        with open(hash_file, 'w', encoding='utf-8') as f:
-            f.write(data_hash)
-    except Exception as e:
-        print(f"[WARN] Could not save hash file {hash_file}: {e}")
-
-def save_date(hash_dir, date_str):
-    """Зберігає поточну дату у файл для перевірки на наступний день"""
-    hash_dir.mkdir(parents=True, exist_ok=True)
-    date_file = hash_dir / 'gpv-all-today.date'
-    try:
-        with open(date_file, 'w', encoding='utf-8') as f:
-            f.write(date_str)
-    except Exception as e:
-        print(f"[WARN] Could not save date file {date_file}: {e}")
-
 def render_all_schedules(json_path, out_path=None, force=False):
     """Рендерити всі графіки на сьогодні в одну таблицю"""
     
@@ -96,7 +12,6 @@ def render_all_schedules(json_path, out_path=None, force=False):
         print("[SKIP] gpv-all-today.png (fact.data is empty)")
         return
 
-    # Динамічне визначення timestamp для 'сьогодні'
     today_ts = str(data.get('fact', {}).get('today', ''))
     if today_ts not in fact_data:
         today_ts = sorted(list(fact_data.keys()))[0]
@@ -153,7 +68,6 @@ def render_all_schedules(json_path, out_path=None, force=False):
 
     print(f"[GENERATE] gpv-all-today.png for {today_date.strftime('%d.%m.%Y')}")
 
-    # Розміри клітинок та пропорції
     cell_w = 1.0
     cell_h = 0.55
     label_w = 2.4
@@ -169,7 +83,7 @@ def render_all_schedules(json_path, out_path=None, force=False):
 
     y_pos = 0
 
-    # === РЯДОК 0: Шапка часу (ЗВЕРХУ) ===
+    # Шапка часу
     rect = Rectangle((0, y_pos), label_w, header_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_HEADER)
     ax.add_patch(rect)
     ax.text(label_w/2, y_pos + header_h/2, 'Черга', fontsize=12, ha='center', va='center', fontweight='bold', color=TEXT_DARK)
@@ -183,12 +97,11 @@ def render_all_schedules(json_path, out_path=None, force=False):
 
     y_pos += header_h
 
-    # === РЯДКИ З ЧЕРГАМИ ===
+    # Рядки черг
     for gpv_key in gpv_keys:
         slots = today_data.get(gpv_key, {str(i): 'yes' for i in range(1, 25)})
         queue_name = sch_names.get(gpv_key, gpv_key)
 
-        # Ліва клітинка з назвою черги
         rect = Rectangle((0, y_pos), label_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_LABEL)
         ax.add_patch(rect)
         ax.text(label_w/2, y_pos + cell_h/2, queue_name, fontsize=11, ha='center', va='center', fontweight='bold', color=TEXT_DARK)
@@ -197,11 +110,9 @@ def render_all_schedules(json_path, out_path=None, force=False):
             x = label_w + i * cell_w
             state = slots.get(str(slot_num), 'yes')
 
-            # Фоновий білий прямокутник
             rect = Rectangle((x, y_pos), cell_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor=WHITE)
             ax.add_patch(rect)
 
-            # Відмальовка вимкнень (повноцінні або попівгодини)
             if state == 'no':
                 ax.add_patch(Rectangle((x, y_pos), cell_w, cell_h, linewidth=0, facecolor=ORANGE))
             elif state == 'first':
@@ -209,7 +120,6 @@ def render_all_schedules(json_path, out_path=None, force=False):
             elif state == 'second':
                 ax.add_patch(Rectangle((x + cell_w/2, y_pos), cell_w/2, cell_h, linewidth=0, facecolor=ORANGE))
 
-            # Контур клітинки
             ax.add_patch(Rectangle((x, y_pos), cell_w, cell_h, linewidth=1.2, edgecolor=BORDER, facecolor='none'))
 
         y_pos += cell_h
@@ -219,7 +129,8 @@ def render_all_schedules(json_path, out_path=None, force=False):
     ax.invert_yaxis()
     ax.axis('off')
 
-    fig.text(0.05, 0.96, f'Графік відключень для Вінницька область на {today_str}',
+    # ОНОВЛЕНИЙ ЄДИНИЙ ЗАГОЛОВОК:
+    fig.text(0.05, 0.96, f'Графік відключень на сьогодні — {today_str} (Вінницька обл.)',
              fontsize=17, fontweight='bold', color=TEXT_DARK)
 
     # Легенда
@@ -253,12 +164,3 @@ def render_all_schedules(json_path, out_path=None, force=False):
     save_hash(hash_dir, new_hash)
     save_date(hash_dir, today_date_code)
     plt.close()
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--json', required=True, help='Шлях до JSON файлу')
-    parser.add_argument('--out', default=None, help='Шлях до вихідної папки')
-    parser.add_argument('--force', action='store_true', help='Примусова регенерація')
-    args = parser.parse_args()
-
-    render_all_schedules(json_path=args.json, out_path=args.out, force=args.force)
