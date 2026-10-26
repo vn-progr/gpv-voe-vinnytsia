@@ -26,14 +26,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install matplotlib numpy requests beautifulsoup4
 
-      - name: Render Test PNGs to Temporary Directory
+      - name: Render Test PNGs to Test Directory
         run: |
           set -e
           JSON_FILE="data/Vinnytsiaoblenerho.json"
-          # Тимчасова папка для тесту — бойові хеші в images/Vinnytsiaoblenerho не зачіпаються!
           TEST_DIR="images/test"
-          TARGET_DIR="images/Vinnytsiaoblenerho"
           
+          echo "🧹 Cleaning previous test images..."
+          rm -rf "$TEST_DIR"
           mkdir -p "$TEST_DIR"
           
           echo "🎨 1/3 Rendering 12 per-queue test charts..."
@@ -43,29 +43,28 @@ jobs:
           python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$TEST_DIR" --force
           
           echo "🎨 3/3 Rendering TOMORROW test overview..."
-          python scripts/render_png_all_tomorrow.py --json "$JSON_FILE" --out "$TEST_DIR" --force
+          python scripts/render_png_all_tomorrow.py --json "$TEST_DIR" --out "$TEST_DIR" --force
           
-          echo "🚚 Replacing target PNGs without touching target hash cache..."
-          # Копіюємо тільки згенеровані PNG у робочу папку, НЕ зачіпаючи images/Vinnytsiaoblenerho/hash
-          cp $TEST_DIR/*.png $TARGET_DIR/ 2>/dev/null || true
-          
-          # Очищаємо тимчасову папку
-          rm -rf "$TEST_DIR"
-          
-          echo "✅ Test PNGs successfully generated and applied!"
+          echo "✅ Test PNGs successfully generated in $TEST_DIR!"
 
-      - name: Commit and Push Updated Images
+      - name: Commit and Push Test Images
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add images/Vinnytsiaoblenerho/*.png
+          # Зараховуємо ТІЛЬКИ тестову папку images/test
+          git add images/test/
           
           if git diff-index --quiet HEAD; then
             echo "No image changes detected to commit."
           else
-            git commit -m "🧪 Test render: updated all PNG schedule images"
+            git commit -m "🧪 Test render: updated PNGs in images/test"
+            
+            # Скидаємо будь-які випадкові зміни в інших папках
+            git checkout -- .
+            git clean -fd
+            
             git pull --rebase origin main
             git push origin main
-            echo "Successfully updated test PNGs!"
+            echo "Successfully pushed test PNGs to images/test!"
           fi
