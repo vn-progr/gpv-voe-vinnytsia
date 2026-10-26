@@ -1,87 +1,3 @@
-#!/usr/bin/env python3
-"""
-Schedule PNG Renderer - класична зведена таблиця усіх графіків на завтра
-Оптимізовано для Telegram (читабельність на смартфонах)
-"""
-
-import json
-import argparse
-from pathlib import Path
-import sys
-from datetime import datetime, timezone, timedelta
-import hashlib
-
-import matplotlib
-matplotlib.use('Agg')  # Для роботи в headless режимі (наприклад, на GitHub Actions)
-
-try:
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-except ImportError:
-    print("ERROR: pip install matplotlib")
-    sys.exit(1)
-
-# Кольори
-ORANGE = '#FF8C00'
-WHITE = '#FFFFFF'
-GRAY_HEADER = '#EAEAEA'
-GRAY_LABEL = '#F2F2F2'
-BORDER = '#707070'
-TEXT_DARK = '#000000'
-
-SLOTS = list(range(1, 25))
-HOURS_TEXT = [f'{i:02d}\n-\n{i+1:02d}' for i in range(24)]
-
-# Таймзона Київ (UTC+2)
-KYIV_TZ = timezone(timedelta(hours=2))
-
-def calculate_all_tomorrow_hash(tomorrow_data):
-    """Розраховує SHA256 хеш всіх даних на завтра"""
-    data_str = json.dumps(tomorrow_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(data_str.encode()).hexdigest()
-
-def load_previous_hash(hash_dir):
-    """Завантажує попередній хеш з папки hash/"""
-    hash_file = hash_dir / 'gpv-all-tomorrow.hash'
-    if hash_file.exists():
-        try:
-            with open(hash_file, 'r', encoding='utf-8') as f:
-                return f.read().strip()
-        except Exception as e:
-            print(f"[WARN] Could not read hash file {hash_file}: {e}")
-    return None
-
-def load_previous_date(hash_dir):
-    """Завантажує попередню дату з файлу дати"""
-    date_file = hash_dir / 'gpv-all-tomorrow.date'
-    if date_file.exists():
-        try:
-            with open(date_file, 'r', encoding='utf-8') as f:
-                return f.read().strip()
-        except Exception as e:
-            print(f"[WARN] Could not read date file {date_file}: {e}")
-    return None
-
-def save_hash(hash_dir, data_hash):
-    """Зберігає хеш даних у папку hash/"""
-    hash_dir.mkdir(parents=True, exist_ok=True)
-    hash_file = hash_dir / 'gpv-all-tomorrow.hash'
-    try:
-        with open(hash_file, 'w', encoding='utf-8') as f:
-            f.write(data_hash)
-    except Exception as e:
-        print(f"[WARN] Could not save hash file {hash_file}: {e}")
-
-def save_date(hash_dir, date_str):
-    """Зберігає поточну дату у файл для перевірки на наступний день"""
-    hash_dir.mkdir(parents=True, exist_ok=True)
-    date_file = hash_dir / 'gpv-all-tomorrow.date'
-    try:
-        with open(date_file, 'w', encoding='utf-8') as f:
-            f.write(date_str)
-    except Exception as e:
-        print(f"[WARN] Could not save date file {date_file}: {e}")
-
 def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
     """Рендерити всі графіки на завтра в одну таблицю"""
     
@@ -91,13 +7,18 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
     fact_data = data.get('fact', {}).get('data', {})
     sch_names = data.get('preset', {}).get('sch_names', {})
     last_updated = data.get('fact', {}).get('update', '')
-    
-    today_ts = str(data.get('fact', {}).get('today'))
+
+    if not fact_data:
+        print("[SKIP] gpv-all-tomorrow.png (fact.data is empty)")
+        return
+
+    today_ts = str(data.get('fact', {}).get('today', ''))
+    if today_ts not in fact_data:
+        today_ts = sorted(list(fact_data.keys()))[0]
+
     tomorrow_ts = str(int(today_ts) + 86400)
-    
     tomorrow_data = fact_data.get(tomorrow_ts, {})
-    tomorrow_date = datetime.fromtimestamp(int(tomorrow_ts), tz=KYIV_TZ)
-    
+
     out_p = Path(out_path) if out_path else Path('.')
     out_p.mkdir(parents=True, exist_ok=True)
     hash_dir = out_p / 'hash'
@@ -106,6 +27,7 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
     prev_hash = load_previous_hash(hash_dir)
     output_file = out_p / 'gpv-all-tomorrow.png'
 
+    tomorrow_date = datetime.fromtimestamp(int(tomorrow_ts), tz=KYIV_TZ)
     tomorrow_date_code = tomorrow_date.strftime('%Y-%m-%d')
     prev_date = load_previous_date(hash_dir)
 
@@ -142,12 +64,11 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
     num_schedules = len(gpv_keys)
 
     if num_schedules == 0:
-        print("[SKIP] gpv-all-tomorrow.png (No GPV schedules found)")
+        print(f"[SKIP] gpv-all-tomorrow.png (No GPV schedules found in ts {tomorrow_ts})")
         return
 
     print(f"[GENERATE] gpv-all-tomorrow.png for {tomorrow_date.strftime('%d.%m.%Y')}")
 
-    # Розміри клітинок та пропорції
     cell_w = 1.0
     cell_h = 0.55
     label_w = 2.4
@@ -155,7 +76,6 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
 
     table_width = label_w + 24 * cell_w
     table_height = header_h + num_schedules * cell_h
-
     fig_height = 2.0 + (num_schedules * 0.45)
 
     fig, ax = plt.subplots(figsize=(18, fig_height), dpi=160)
@@ -164,7 +84,7 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
 
     y_pos = 0
 
-    # === РЯДОК 0: Шапка часу (ЗВЕРХУ) ===
+    # Шапка часу
     rect = Rectangle((0, y_pos), label_w, header_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_HEADER)
     ax.add_patch(rect)
     ax.text(label_w/2, y_pos + header_h/2, 'Черга', fontsize=12, ha='center', va='center', fontweight='bold', color=TEXT_DARK)
@@ -178,7 +98,7 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
 
     y_pos += header_h
 
-    # === РЯДКИ З ЧЕРГАМИ (ВІД 1.1 ДО 6.2) ===
+    # Рядки з чергами
     for gpv_key in gpv_keys:
         slots = tomorrow_data.get(gpv_key, {str(i): 'yes' for i in range(1, 25)})
         queue_name = sch_names.get(gpv_key, gpv_key)
@@ -210,31 +130,27 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
     ax.invert_yaxis()
     ax.axis('off')
 
-    # === ХЕДЕР ЗГОРИ ===
-    fig.text(0.05, 0.96, f'Графік відключень на завтра (Вінницька обл.) — {tomorrow_str}',
+    # ОНОВЛЕНИЙ ЗАГОЛОВОК:
+    fig.text(0.05, 0.96, f'Графік відключень на завтра — {tomorrow_str} (Вінницька обл.)',
              fontsize=17, fontweight='bold', color=TEXT_DARK)
 
-    # === ЛЕГЕНДА ЗНИЗУ ПІД ТАБЛИЦЕЮ ===
+    # Легенда
     legend_y = 0.02
     fig.patches.clear()
 
-    # 1. Світло є
     rect1 = Rectangle((0.08, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
     fig.patches.append(rect1)
     fig.text(0.12, legend_y + 0.015, 'Світло є', fontsize=11, va='center', color=TEXT_DARK)
 
-    # 2. Світла нема
     rect2 = Rectangle((0.26, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=ORANGE, transform=fig.transFigure)
     fig.patches.append(rect2)
     fig.text(0.30, legend_y + 0.015, 'Світла нема', fontsize=11, va='center', color=TEXT_DARK)
 
-    # 3. Перші 30 хв
     rect3_bg = Rectangle((0.45, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
     rect3_fill = Rectangle((0.45, legend_y), 0.015, 0.035, linewidth=0, facecolor=ORANGE, transform=fig.transFigure)
     fig.patches.extend([rect3_bg, rect3_fill])
     fig.text(0.49, legend_y + 0.015, 'Світла нема перші 30 хв.', fontsize=11, va='center', color=TEXT_DARK)
 
-    # 4. Другі 30 хв
     rect4_bg = Rectangle((0.68, legend_y), 0.03, 0.035, linewidth=1, edgecolor=BORDER, facecolor=WHITE, transform=fig.transFigure)
     rect4_fill = Rectangle((0.68 + 0.015, legend_y), 0.015, 0.035, linewidth=0, facecolor=ORANGE, transform=fig.transFigure)
     fig.patches.extend([rect4_bg, rect4_fill])
@@ -249,12 +165,3 @@ def render_all_tomorrow_schedules(json_path, out_path=None, force=False):
     save_hash(hash_dir, new_hash)
     save_date(hash_dir, tomorrow_date_code)
     plt.close()
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--json', required=True)
-    parser.add_argument('--out', default=None)
-    parser.add_argument('--force', action='store_true', help='Примусова регенерація без перевірки хешу')
-    args = parser.parse_args()
-
-    render_all_tomorrow_schedules(args.json, args.out, force=args.force)
