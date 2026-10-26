@@ -12,9 +12,11 @@ def render_all_schedules(json_path, out_path=None, force=False):
         print("[SKIP] gpv-all-today.png (fact.data is empty)")
         return
 
+    # Безпечне визначення сьогоднішнього timestamp
+    available_days = sorted(list(fact_data.keys()))
     today_ts = str(data.get('fact', {}).get('today', ''))
     if today_ts not in fact_data:
-        today_ts = sorted(list(fact_data.keys()))[0]
+        today_ts = available_days[0]
 
     today_data = fact_data.get(today_ts, {})
 
@@ -68,11 +70,7 @@ def render_all_schedules(json_path, out_path=None, force=False):
 
     print(f"[GENERATE] gpv-all-today.png for {today_date.strftime('%d.%m.%Y')}")
 
-    cell_w = 1.0
-    cell_h = 0.55
-    label_w = 2.4
-    header_h = 1.3
-
+    cell_w, cell_h, label_w, header_h = 1.0, 0.55, 2.4, 1.3
     table_width = label_w + 24 * cell_w
     table_height = header_h + num_schedules * cell_h
     fig_height = 2.0 + (num_schedules * 0.45)
@@ -83,7 +81,7 @@ def render_all_schedules(json_path, out_path=None, force=False):
 
     y_pos = 0
 
-    # Шапка часу
+    # Шапка
     rect = Rectangle((0, y_pos), label_w, header_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_HEADER)
     ax.add_patch(rect)
     ax.text(label_w/2, y_pos + header_h/2, 'Черга', fontsize=12, ha='center', va='center', fontweight='bold', color=TEXT_DARK)
@@ -92,12 +90,11 @@ def render_all_schedules(json_path, out_path=None, force=False):
         x = label_w + i * cell_w
         rect = Rectangle((x, y_pos), cell_w, header_h, linewidth=1.2, edgecolor=BORDER, facecolor=GRAY_HEADER)
         ax.add_patch(rect)
-        ax.text(x + cell_w/2, y_pos + header_h/2, HOURS_TEXT[i], fontsize=10, ha='center', va='center',
-                fontweight='bold', color=TEXT_DARK, linespacing=1.2)
+        ax.text(x + cell_w/2, y_pos + header_h/2, HOURS_TEXT[i], fontsize=10, ha='center', va='center', fontweight='bold', color=TEXT_DARK, linespacing=1.2)
 
     y_pos += header_h
 
-    # Рядки черг
+    # Рядки
     for gpv_key in gpv_keys:
         slots = today_data.get(gpv_key, {str(i): 'yes' for i in range(1, 25)})
         queue_name = sch_names.get(gpv_key, gpv_key)
@@ -129,7 +126,7 @@ def render_all_schedules(json_path, out_path=None, force=False):
     ax.invert_yaxis()
     ax.axis('off')
 
-    # ОНОВЛЕНИЙ ЄДИНИЙ ЗАГОЛОВОК:
+    # Оновлений заголовок
     fig.text(0.05, 0.96, f'Графік відключень на сьогодні — {today_str} (Вінницька обл.)',
              fontsize=17, fontweight='bold', color=TEXT_DARK)
 
