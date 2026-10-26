@@ -1,12 +1,16 @@
 name: 🎨 Force Render All PNG Images
 
 on:
-  workflow_dispatch: # Ручний запуск з інтерфейсу GitHub
+  workflow_dispatch:
   push:
     branches:
       - main
     paths:
-      - 'data/Vinnytsiaoblenerho.json' # Запускається при оновленні JSON-файлу
+      - 'data/Vinnytsiaoblenerho.json'
+
+# Надаємо права на запис у вміст репозиторію
+permissions:
+  contents: write
 
 jobs:
   render_images:
@@ -38,13 +42,11 @@ jobs:
           echo "🎨 Starting forced image generation..."
           mkdir -p "$OUT_DIR"
           
-          # 1. Окремі графіки для кожної черги
           if [ -f "scripts/render_png.py" ]; then
             echo "📊 Rendering per-queue charts..."
             python scripts/render_png.py --json "$JSON_FILE" --out "$OUT_DIR" --force
           fi
           
-          # 2. Зведений графік на сьогодні
           if [ -f "scripts/render_all_today.py" ]; then
             echo "📊 Rendering TODAY overview..."
             python scripts/render_all_today.py --json "$JSON_FILE" --out "$OUT_DIR" --force
@@ -53,7 +55,6 @@ jobs:
             python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$OUT_DIR" --force
           fi
           
-          # 3. Зведений графік на завтра
           if [ -f "scripts/render_all_tomorrow.py" ]; then
             echo "📊 Rendering TOMORROW overview..."
             python scripts/render_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR" --force
@@ -69,7 +70,6 @@ jobs:
           
           git add images/
           
-          # Перевірка наявності змін перед комітом
           if git diff-index --quiet HEAD; then
             echo "ℹ️ No image changes detected to commit."
           else
