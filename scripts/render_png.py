@@ -102,4 +102,5 @@ def render_schedule(json_path, gpv_key=None, out_path=None, force=False):
     today_data = fact_data.get(today_ts, {})
     tomorrow_data = fact_data.get(tomorrow_ts, {})
 
-    today_date = datetime.fromtimestamp(int(today_ts), tz
+    today_date = datetime.fromtimestamp(int(today_ts), tz=KYIV_TZ)
+    tomorrow_date = datetime.fromtimestamp(int(tomorrow_ts), tz=KYIV_TZ)
