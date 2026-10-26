@@ -1,3 +1,0 @@
-python scripts/render_png.py --json data/Vinnytsiaoblenerho.json --out images/Vinnytsiaoblenerho --force
-python scripts/render_all_today.py --json data/Vinnytsiaoblenerho.json --out images/Vinnytsiaoblenerho --force
-python scripts/render_all_tomorrow.py --json data/Vinnytsiaoblenerho.json --out images/Vinnytsiaoblenerho --force
