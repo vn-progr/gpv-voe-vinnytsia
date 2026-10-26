@@ -35,22 +35,20 @@ jobs:
 
       - name: Render PNG Schedules
         run: |
+          set -e
           JSON_FILE="data/Vinnytsiaoblenerho.json"
           OUT_DIR="images/Vinnytsiaoblenerho"
           
-          echo "Starting forced image generation..."
-          mkdir -p "$OUT_DIR"
-          
-          echo "Rendering 12 per-queue charts..."
+          echo "🎨 1/3 Rendering 12 per-queue charts..."
           python scripts/render_png.py --json "$JSON_FILE" --out "$OUT_DIR" --force
           
-          echo "Rendering TODAY overview..."
+          echo "🎨 2/3 Rendering TODAY overview..."
           python scripts/render_png_all_today.py --json "$JSON_FILE" --out "$OUT_DIR" --force
           
-          echo "Rendering TOMORROW overview..."
+          echo "🎨 3/3 Rendering TOMORROW overview..."
           python scripts/render_png_all_tomorrow.py --json "$JSON_FILE" --out "$OUT_DIR" --force
           
-          echo "All 14 images generated in $OUT_DIR"
+          echo "✅ All 14 images generated successfully!"
 
       - name: Commit and Push Generated Images
         run: |
