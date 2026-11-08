@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1794122537,
+  "lastUpdated": 1794122722,
   "fact": {
     "data": {
       "1794088800": {
@@ -177,14 +177,14 @@
           "14": "yes",
           "15": "yes",
           "16": "yes",
-          "17": "no",
-          "18": "no",
+          "17": "second",
+          "18": "second",
           "19": "yes",
           "20": "yes",
           "21": "yes",
           "22": "yes",
-          "23": "no",
-          "24": "no"
+          "23": "second",
+          "24": "second"
         },
         "GPV4.2": {
           "1": "yes",
@@ -203,14 +203,14 @@
           "14": "yes",
           "15": "yes",
           "16": "yes",
-          "17": "no",
-          "18": "no",
+          "17": "second",
+          "18": "second",
           "19": "yes",
           "20": "yes",
           "21": "yes",
           "22": "yes",
-          "23": "no",
-          "24": "no"
+          "23": "second",
+          "24": "second"
         },
         "GPV5.1": {
           "1": "no",
@@ -225,14 +225,14 @@
           "10": "yes",
           "11": "yes",
           "12": "yes",
-          "13": "no",
-          "14": "no",
+          "13": "yes",
+          "14": "yes",
           "15": "yes",
           "16": "yes",
           "17": "yes",
           "18": "yes",
-          "19": "no",
-          "20": "no",
+          "19": "second",
+          "20": "second",
           "21": "yes",
           "22": "yes",
           "23": "yes",
@@ -251,14 +251,14 @@
           "10": "yes",
           "11": "yes",
           "12": "yes",
-          "13": "no",
-          "14": "no",
+          "13": "yes",
+          "14": "yes",
           "15": "yes",
           "16": "yes",
           "17": "yes",
           "18": "yes",
-          "19": "no",
-          "20": "no",
+          "19": "second",
+          "20": "second",
           "21": "yes",
           "22": "yes",
           "23": "yes",
@@ -283,8 +283,8 @@
           "16": "yes",
           "17": "yes",
           "18": "yes",
-          "19": "no",
-          "20": "no",
+          "19": "second",
+          "20": "second",
           "21": "yes",
           "22": "yes",
           "23": "yes",
@@ -632,7 +632,7 @@
         }
       }
     },
-    "update": "08.11.2026 09:22",
+    "update": "08.11.2026 09:25",
     "today": 1794088800
   },
   "preset": {
@@ -659,19 +659,19 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "08.11.2026 09:22"
+    "updateFact": "08.11.2026 09:25"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1794122537,
+    "at": 1794122722,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
   "meta": {
     "schemaVersion": "1.0.0",
-    "contentHash": "30e2e265c22147933cfdf17dbede2e4d114748f9674df7ae7c53ecb074d7c6ea"
+    "contentHash": "ecf1e284426e257bc7085e9f75006767b504629363f87f07e00bb1eb39b461ab"
   }
 }
