@@ -1,6 +1,6 @@
 {
   "regionId": "vinnytsia",
-  "lastUpdated": 1794863060,
+  "lastUpdated": 1794863421,
   "fact": {
     "data": {
       "1794780000": {
@@ -589,20 +589,20 @@
           "8": "yes",
           "9": "yes",
           "10": "yes",
-          "11": "yes",
-          "12": "yes",
+          "11": "no",
+          "12": "no",
           "13": "yes",
           "14": "yes",
           "15": "yes",
           "16": "yes",
-          "17": "yes",
-          "18": "yes",
+          "17": "no",
+          "18": "no",
           "19": "yes",
           "20": "yes",
           "21": "yes",
           "22": "yes",
-          "23": "yes",
-          "24": "yes"
+          "23": "no",
+          "24": "no"
         },
         "GPV6.2": {
           "1": "yes",
@@ -615,24 +615,24 @@
           "8": "yes",
           "9": "yes",
           "10": "yes",
-          "11": "yes",
-          "12": "yes",
+          "11": "no",
+          "12": "no",
           "13": "yes",
           "14": "yes",
-          "15": "yes",
-          "16": "yes",
-          "17": "yes",
-          "18": "yes",
+          "15": "no",
+          "16": "no",
+          "17": "no",
+          "18": "no",
           "19": "yes",
           "20": "yes",
           "21": "yes",
           "22": "yes",
-          "23": "yes",
-          "24": "yes"
+          "23": "no",
+          "24": "no"
         }
       }
     },
-    "update": "16.11.2026 23:04",
+    "update": "16.11.2026 23:10",
     "today": 1794780000
   },
   "preset": {
@@ -659,19 +659,19 @@
       "GPV6.1": "Черга 6.1",
       "GPV6.2": "Черга 6.2"
     },
-    "updateFact": "16.11.2026 23:04"
+    "updateFact": "16.11.2026 23:10"
   },
   "lastUpdateStatus": {
     "status": "parsed",
     "ok": true,
     "code": 200,
     "message": null,
-    "at": 1794863060,
+    "at": 1794863421,
     "attempt": 1
   },
   "regionAffiliation": "Вінницька область",
   "meta": {
     "schemaVersion": "1.0.0",
-    "contentHash": "d65973bc5af6aadeb0028b2ed7e25a3be5b7ba0cc69a6122a61b9569b3ce0cf4"
+    "contentHash": "9f7c60675f5bcf43177e72046943adb3f42651bfea9902f07b738168b4de2ce8"
   }
 }
