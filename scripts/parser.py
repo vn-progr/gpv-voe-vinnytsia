@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-🔌 GPV VOE Вінниця - BezSvitla Parser
-Парсить 12 черг → data/Vinnytsiaoblenerho.json (GPV формат з first/second)
+🔌 GPV VOE Вінниця - Multi-Source Parser (BezSvitla + Alerts.Energy + KolyBude)
+Парсить 12 черг з 3 ресурсів → data/Vinnytsiaoblenerho.json
 """
 import json
 import os
-import time
 import sys
 import re
-from datetime import datetime, timezone, timedelta
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
 import requests
 from requests.adapters import HTTPAdapter
@@ -19,138 +19,252 @@ def log(msg):
     print(msg)
     sys.stdout.flush()
 
-for lib in ['requests', 'bs4']:
-    try:
-        __import__(lib)
-    except ImportError:
-        print(f"❌ ERROR: pip install -r requirements.txt")
-        sys.exit(1)
-
 QUEUE_MAPPING = {
-    "1.1": "1.1",
-    "1.2": "1.2",
-    "2.1": "2.1",
-    "2.2": "2.2",
-    "3.1": "3.1",
-    "3.2": "3.2",
-    "4.1": "4.1",
-    "4.2": "4.2",
-    "5.1": "5.1",
-    "5.2": "5.2",
-    "6.1": "6.1",
-    "6.2": "6.2"
+    "1.1": "1.1", "1.2": "1.2",
+    "2.1": "2.1", "2.2": "2.2",
+    "3.1": "3.1", "3.2": "3.2",
+    "4.1": "4.1", "4.2": "4.2",
+    "5.1": "5.1", "5.2": "5.2",
+    "6.1": "6.1", "6.2": "6.2"
 }
 
 QUEUE_TO_GPV = {k: f"GPV{k}" for k in QUEUE_MAPPING}
 ALL_QUEUE_KEYS = list(QUEUE_MAPPING)
-BASE_URL = "https://bezsvitla.com.ua/vinnytska-oblast/cherha-{queue}"
-TOMORROW_URL = BASE_URL + "/grafik-na-zavtra"
 KYIV_TZ = timezone(timedelta(hours=2))
+OUTPUT_FILE = "data/Vinnytsiaoblenerho.json"
 
 def create_session():
     s = requests.Session()
-    retry_strategy = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-    s.mount('http://', HTTPAdapter(max_retries=retry_strategy))
-    s.mount('https://', HTTPAdapter(max_retries=retry_strategy))
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=20, pool_maxsize=20)
+    s.mount('http://', adapter)
+    s.mount('https://', adapter)
     s.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9',
         'Accept-Language': 'uk,en;q=0.9',
     })
     return s
 
+# --- Допоміжні функції перетворення часу у слоти ---
+
 def parse_time_slot(t):
-    m = re.match(r'(\d{2}):(\d{2})\s*[––\-\s–]\s*(\d{2}):(\d{2})', t)
+    # Підтримує як "08:00 - 10:00", так і "8:00–10:00"
+    m = re.search(r'(\d{1,2}):(\d{2})\s*[––\-\s–]\s*(\d{1,2}):(\d{2})', t)
     return tuple(map(int, m.groups())) if m else None
 
 def round_minutes_to_half_hour(minutes):
-    """< 30 → 0, >= 30 → 30"""
     return 30 if minutes >= 30 else 0
 
 def hour_to_slot(h):
-    """Слот N = (N-1):00 до N:00"""
     return 1 if h == 0 else h + 1
 
-def parse_html_schedule(html):
-    """
-    Парсить HTML і повертає слоти 1-24 зі станами:
-    - "yes" - світло є
-    - "no" - повна година без світла
-    - "first" - перші 30 хв без світла
-    - "second" - другі 30 хв без світла
-    """
-    soup = BeautifulSoup(html, 'html.parser')
+def intervals_to_slots(time_strings):
+    """Перетворює список рядків виду ['08:00-10:00', '14:00-16:00'] у слоти 1..24."""
     slots = {str(i): "yes" for i in range(1, 25)}
-    slot_elements = soup.select('div.bz-schedule-slot')
-
-    for el in slot_elements:
-        is_off = 'bz-schedule-slot--off' in el.get('class', [])
-        if not is_off:
-            continue
-
-        ts = el.select_one('.bz-schedule-slot__time')
-        if not ts:
-            continue
-
-        t = parse_time_slot(ts.get_text(strip=True))
+    for raw_t in time_strings:
+        t = parse_time_slot(raw_t)
         if not t:
             continue
 
         start_hour, start_minute, end_hour, end_minute = t
-
-        # Стартовий слот
         start_slot = hour_to_slot(start_hour)
 
-        # Обробка кінця з округленням
         rounded_end_minute = round_minutes_to_half_hour(end_minute)
-        if rounded_end_minute == 30:
-            actual_end_hour = end_hour + 1
-        else:
-            actual_end_hour = end_hour
+        actual_end_hour = end_hour + 1 if rounded_end_minute == 30 else end_hour
         end_slot = hour_to_slot(actual_end_hour)
 
-        # Заповнюємо всі слоти як "no"
         for slot in range(start_slot, end_slot):
             if 1 <= slot <= 24:
                 slots[str(slot)] = "no"
 
-        # Коригуємо перший слот, якщо старт не з 00 хв
         if start_minute != 0 and start_slot <= 24:
-            if start_minute >= 30:
-                slots[str(start_slot)] = "second"
-            else:
-                slots[str(start_slot)] = "first"
+            slots[str(start_slot)] = "second" if start_minute >= 30 else "first"
 
-        # Коригуємо останній слот, якщо кінець не на 00 хв
         if end_minute != 0:
             last_full_hour = actual_end_hour - 1
             last_slot = hour_to_slot(last_full_hour)
             if last_slot <= 24 and not (end_hour == 23 and end_minute == 59):
-                if end_minute <= 30:
-                    slots[str(last_slot)] = "first"
-                else:
-                    slots[str(last_slot)] = "second"
+                slots[str(last_slot)] = "first" if end_minute <= 30 else "second"
 
     return slots
 
-def get_queue_urls(q):
-    slug = q.replace('.', '-')
-    return BASE_URL.format(queue=slug), TOMORROW_URL.format(queue=slug)
+def has_outages(slots):
+    """Перевіряє, чи є у словнику слотів хоча б одне відключення."""
+    return bool(slots) and any(v != "yes" for v in slots.values())
 
-def parse_queue(s, q, i):
+# --- Парсери для кожного з 3 ресурсів ---
+
+def parse_bezsvitla_html(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    intervals = []
+    for el in soup.select('div.bz-schedule-slot.bz-schedule-slot--off'):
+        ts = el.select_one('.bz-schedule-slot__time')
+        if ts:
+            intervals.append(ts.get_text(strip=True))
+    return intervals_to_slots(intervals)
+
+def fetch_bezsvitla(s, q):
+    slug = q.replace('.', '-')
+    u_today = f"https://bezsvitla.com.ua/vinnytska-oblast/cherha-{slug}"
+    u_tomorrow = f"{u_today}/grafik-na-zavtra"
     try:
-        time.sleep(1.5)
-        log(f"[{i:2d}/12] {q}")
-        tu, tmu = get_queue_urls(q)
-        tr, tmur = s.get(tu, timeout=30), s.get(tmu, timeout=30)
+        r1 = s.get(u_today, timeout=20)
+        r2 = s.get(u_tomorrow, timeout=20)
         return {
-            'queue_key': q,
-            'today_slots': parse_html_schedule(tr.text) if tr.ok else {},
-            'tomorrow_slots': parse_html_schedule(tmur.text) if tmur.ok else {}
+            'today': parse_bezsvitla_html(r1.text) if r1.ok else None,
+            'tomorrow': parse_bezsvitla_html(r2.text) if r2.ok else None,
         }
     except Exception as e:
-        log(f"[{i:2d}/12] ERROR: {e}")
-        return None
+        log(f"  [bezsvitla] {q} error: {e}")
+        return {'today': None, 'tomorrow': None}
+
+def parse_alerts_energy_html(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    intervals = []
+    for li in soup.select('ul.summary-intervals li'):
+        times = li.select('strong time')
+        if len(times) >= 2:
+            t_start = times[0].get_text(strip=True)
+            t_end = times[1].get_text(strip=True)
+            intervals.append(f"{t_start}-{t_end}")
+    return intervals_to_slots(intervals)
+
+def fetch_alerts_energy(s, q):
+    u_today = f"https://alerts.energy/vinnytska-oblast/vinnickij-rayon/schedule/vinnytska-oblast-oblenergo/{q}"
+    u_tomorrow = f"{u_today}/zavtra"
+    try:
+        r1 = s.get(u_today, timeout=20)
+        r2 = s.get(u_tomorrow, timeout=20)
+        return {
+            'today': parse_alerts_energy_html(r1.text) if r1.ok else None,
+            'tomorrow': parse_alerts_energy_html(r2.text) if r2.ok else None,
+        }
+    except Exception as e:
+        log(f"  [alerts.energy] {q} error: {e}")
+        return {'today': None, 'tomorrow': None}
+
+def parse_kolybude_html(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    res = {'today': None, 'tomorrow': None}
+
+    for h3 in soup.find_all('h3'):
+        title = h3.get_text(strip=True)
+        if "Графік на сьогодні" in title:
+            day_key = 'today'
+        elif "Графік на завтра" in title:
+            day_key = 'tomorrow'
+        else:
+            continue
+
+        # Піднімаємось до спільного контейнера секції дня і шукаємо data-testid="outage-summary"
+        container = h3.find_parent('div', class_='mb-3') or h3.find_parent('div')
+        summary = None
+        while container:
+            summary = container.find(attrs={'data-testid': 'outage-summary'})
+            if summary:
+                break
+            container = container.parent
+
+        if not summary:
+            continue
+
+        intervals = []
+        for span in summary.find_all('span', recursive=False):
+            text = span.get_text(" ", strip=True)
+            if "Відключень не передбачено" in text:
+                intervals = []
+                break
+            if re.search(r'\d{1,2}:\d{2}\s*[–\-]\s*\d{1,2}:\d{2}', text):
+                intervals.append(text)
+
+        res[day_key] = intervals_to_slots(intervals)
+
+    return res
+
+def fetch_kolybude(s, q):
+    url = f"https://kolybude.com/vinnytsia?group={q}"
+    try:
+        r = s.get(url, timeout=20)
+        return parse_kolybude_html(r.text) if r.ok else {'today': None, 'tomorrow': None}
+    except Exception as e:
+        log(f"  [kolybude] {q} error: {e}")
+        return {'today': None, 'tomorrow': None}
+
+# --- Логіка вибору найсвіжішого джерела ---
+
+def load_previous_data():
+    if not os.path.exists(OUTPUT_FILE):
+        return {}
+    try:
+        with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return raw.get("fact", {}).get("data", {})
+    except Exception:
+        return {}
+
+def pick_best_slots(sources_slots, prev_slots):
+    """
+    Визначає, які слоти публікувати:
+    1. Шукає джерело, де є відключення І дані відрізняються від попереднього збереженого файлу.
+    2. Якщо змін немає — повертає перше джерело з непорожніми даними.
+    3. Якщо на всіх джерелах порожньо — повертає порожній графік (усі 'yes').
+    """
+    valid_sources = {name: sl for name, sl in sources_slots.items() if sl is not None}
+    non_empty = {name: sl for name, sl in valid_sources.items() if has_outages(sl)}
+
+    if non_empty:
+        # 1. Пріоритет тому ресурсу, де дані оновилися швидше (відрізняються від збережених)
+        if prev_slots:
+            for name, sl in non_empty.items():
+                if sl != prev_slots:
+                    return sl, name
+        # 2. Якщо на всіх ресурсах дані однакові (або перше збереження) — беремо перший непорожній
+        first_name = next(iter(non_empty))
+        return non_empty[first_name], first_name
+
+    # 3. Якщо на всіх ресурсах порожньо (або вони повернули графік без відключень)
+    if valid_sources:
+        first_name = next(iter(valid_sources))
+        return valid_sources[first_name], f"{first_name} (empty)"
+
+    return {str(i): "yes" for i in range(1, 25)}, "fallback"
+
+def process_queue(s, q, prev_today, prev_tomorrow):
+    # Опитуємо всі 3 джерела для черги паралельно
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_bez = ex.submit(fetch_bezsvitla, s, q)
+        f_alr = ex.submit(fetch_alerts_energy, s, q)
+        f_kol = ex.submit(fetch_kolybude, s, q)
+
+        r_bez = f_bez.result()
+        r_alr = f_alr.result()
+        r_kol = f_kol.result()
+
+    today_candidates = {
+        'bezsvitla': r_bez['today'],
+        'alerts.energy': r_alr['today'],
+        'kolybude': r_kol['today'],
+    }
+    tomorrow_candidates = {
+        'bezsvitla': r_bez['tomorrow'],
+        'alerts.energy': r_alr['tomorrow'],
+        'kolybude': r_kol['tomorrow'],
+    }
+
+    best_today, src_today = pick_best_slots(today_candidates, prev_today)
+    best_tomorrow, src_tomorrow = pick_best_slots(tomorrow_candidates, prev_tomorrow)
+
+    log(f"Черга {q:3s} | Сьогодні: {src_today:20s} | Завтра: {src_tomorrow}")
+    return {
+        'queue_key': q,
+        'today_slots': best_today,
+        'tomorrow_slots': best_tomorrow
+    }
 
 def transform_to_gpv(qd, now):
     td = now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=KYIV_TZ)
@@ -171,14 +285,14 @@ def transform_to_gpv(qd, now):
 def save_results(qd_list):
     now = datetime.now(KYIV_TZ)
     data = transform_to_gpv(qd_list, now)
-    
+
     result = {
         "regionId": "vinnytsia",
         "lastUpdated": int(now.timestamp()),
         "fact": {
             "data": data,
             "update": now.strftime('%d.%m.%Y %H:%M'),
-            "today": int(now.replace(hour=0, minute=0, second=0, tzinfo=KYIV_TZ).timestamp())
+            "today": int(now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=KYIV_TZ).timestamp())
         },
         "preset": {
             "days": {
@@ -207,18 +321,37 @@ def save_results(qd_list):
             "contentHash": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
         }
     }
-    
+
     os.makedirs("data", exist_ok=True)
-    with open("data/Vinnytsiaoblenerho.json", "w", encoding="utf-8") as f:
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
-    log(f"✅ SAVED: data/Vinnytsiaoblenerho.json ({len([q for q in qd_list if q])}/12)")
+
+    log(f"✅ SAVED: {OUTPUT_FILE} ({len([q for q in qd_list if q])}/12)")
     return True
 
 def main():
-    log("🔌 GPV ВОЕ ВІННИЦЯ - BezSvitla Parser")
+    log("🔌 GPV ВОЕ ВІННИЦЯ - Multi-Source Parser")
+    now = datetime.now(KYIV_TZ)
+    td = now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=KYIV_TZ)
+    tts_str = str(int(td.timestamp()))
+    tmt_str = str(int((td + timedelta(days=1)).timestamp()))
+
+    prev_data = load_previous_data()
     s = create_session()
-    qdata = [parse_queue(s, q, i + 1) for i, q in enumerate(ALL_QUEUE_KEYS)]
+
+    qdata = []
+    # Обробляємо черги в 4 паралельні потоки (разом 12 запитів одночасно, щоб не отримати бан 429)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = []
+        for q in ALL_QUEUE_KEYS:
+            gpv_key = QUEUE_TO_GPV[q]
+            prev_today = prev_data.get(tts_str, {}).get(gpv_key)
+            prev_tomorrow = prev_data.get(tmt_str, {}).get(gpv_key)
+            futures.append(executor.submit(process_queue, s, q, prev_today, prev_tomorrow))
+
+        for f in futures:
+            qdata.append(f.result())
+
     save_results(qdata)
     log("🎉 ГОТОВО!")
 
