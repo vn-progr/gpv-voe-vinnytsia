@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-🔌 GPV VOE Вінниця - Multi-Source Parser (BezSvitla + Alerts.org.ua + KolyBude)
-Парсить 12 черг з 3 ресурсів → data/Vinnytsiaoblenerho.json
+🔌 GPV VOE Вінниця - Dual-Source Parser (BezSvitla + KolyBude)
+Парсить 12 черг з 2 ресурсів → data/Vinnytsiaoblenerho.json
 """
 import json
 import os
@@ -95,7 +95,7 @@ def intervals_to_slots(time_strings):
 def has_outages(slots):
     return bool(slots) and any(v != "yes" for v in slots.values())
 
-# --- Парсери для кожного з 3 ресурсів ---
+# --- Парсери для BezSvitla та KolyBude ---
 
 def parse_bezsvitla_html(html):
     soup = BeautifulSoup(html, 'html.parser')
@@ -120,62 +120,6 @@ def fetch_bezsvitla(s, q):
     except Exception as e:
         log(f"  [bezsvitla] {q} error: {e}")
         return {'today': None, 'tomorrow': None}
-
-def parse_alerts_org_ua_html(html):
-    """Парсить усі 12 черг зі сторінки alerts.org.ua за один прохід."""
-    soup = BeautifulSoup(html, 'html.parser')
-    result = {}
-    for group_div in soup.select('div.js-group'):
-        name_el = group_div.select_one('b.group-name')
-        if not name_el:
-            continue
-
-        # Витягуємо номер черги з тексту "Група 1.1" -> "1.1"
-        m = re.search(r'(\d+\.\d+)', name_el.get_text(strip=True))
-        if not m:
-            continue
-        q_key = m.group(1)
-        if q_key not in QUEUE_MAPPING:
-            continue
-
-        intervals = []
-        for period_item in group_div.select('div.period > div'):
-            # Беремо лише періоди, де є <b class="off">
-            if period_item.select_one('b.off'):
-                t_start = period_item.get('data-start')
-                t_end = period_item.get('data-end')
-                if t_start and t_end:
-                    intervals.append(f"{t_start}-{t_end}")
-                else:
-                    intervals.append(period_item.get_text(" ", strip=True))
-
-        result[q_key] = intervals_to_slots(intervals)
-    return result
-
-def fetch_alerts_org_ua_all(s, now):
-    """Завантажує сьогоднішню та завтрашню сторінки alerts.org.ua."""
-    today_str = now.strftime('%Y-%m-%d')
-    tomorrow_str = (now + timedelta(days=1)).strftime('%Y-%m-%d')
-
-    u_today = f"https://alerts.org.ua/vinnytcka-oblast/{today_str}.html"
-    u_tomorrow = f"https://alerts.org.ua/vinnytcka-oblast/{tomorrow_str}.html"
-
-    today_map, tomorrow_map = {}, {}
-    try:
-        r1 = s.get(u_today, timeout=20)
-        if r1.ok:
-            today_map = parse_alerts_org_ua_html(r1.text)
-    except Exception as e:
-        log(f"  [alerts.org.ua] today ({today_str}) error: {e}")
-
-    try:
-        r2 = s.get(u_tomorrow, timeout=20)
-        if r2.ok:
-            tomorrow_map = parse_alerts_org_ua_html(r2.text)
-    except Exception as e:
-        log(f"  [alerts.org.ua] tomorrow ({tomorrow_str}) error: {e}")
-
-    return today_map, tomorrow_map
 
 def parse_kolybude_html(html):
     soup = BeautifulSoup(html, 'html.parser')
@@ -239,7 +183,7 @@ def pick_best_slots(sources_slots, prev_slots):
     """
     1. Шукає джерело з непорожніми даними, які відрізняються від попереднього збереження.
     2. Якщо змін немає — повертає перше джерело з непорожніми даними.
-    3. Якщо на всіх джерелах порожньо — повертає порожній графік (усі 'yes').
+    3. Якщо на обох джерелах порожньо — повертає порожній графік (усі 'yes').
     """
     valid_sources = {name: sl for name, sl in sources_slots.items() if sl is not None}
     non_empty = {name: sl for name, sl in valid_sources.items() if has_outages(sl)}
@@ -258,7 +202,7 @@ def pick_best_slots(sources_slots, prev_slots):
 
     return {str(i): "yes" for i in range(1, 25)}, "fallback"
 
-def process_queue(s, q, alerts_today, alerts_tomorrow, prev_today, prev_tomorrow):
+def process_queue(s, q, prev_today, prev_tomorrow):
     with ThreadPoolExecutor(max_workers=2) as ex:
         f_bez = ex.submit(fetch_bezsvitla, s, q)
         f_kol = ex.submit(fetch_kolybude, s, q)
@@ -268,19 +212,17 @@ def process_queue(s, q, alerts_today, alerts_tomorrow, prev_today, prev_tomorrow
 
     today_candidates = {
         'bezsvitla': r_bez['today'],
-        'alerts.org.ua': alerts_today,
         'kolybude': r_kol['today'],
     }
     tomorrow_candidates = {
         'bezsvitla': r_bez['tomorrow'],
-        'alerts.org.ua': alerts_tomorrow,
         'kolybude': r_kol['tomorrow'],
     }
 
     best_today, src_today = pick_best_slots(today_candidates, prev_today)
     best_tomorrow, src_tomorrow = pick_best_slots(tomorrow_candidates, prev_tomorrow)
 
-    log(f"Черга {q:3s} | Сьогодні: {src_today:20s} | Завтра: {src_tomorrow}")
+    log(f"Черга {q:3s} | Сьогодні: {src_today:18s} | Завтра: {src_tomorrow}")
     return {
         'queue_key': q,
         'today_slots': best_today,
@@ -351,7 +293,7 @@ def save_results(qd_list):
     return True
 
 def main():
-    log("🔌 GPV ВОЕ ВІННИЦЯ - Multi-Source Parser")
+    log("🔌 GPV ВОЕ ВІННИЦЯ - Dual-Source Parser (BezSvitla + KolyBude)")
     now = datetime.now(KYIV_TZ)
     td = now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=KYIV_TZ)
     tts_str = str(int(td.timestamp()))
@@ -360,9 +302,6 @@ def main():
     prev_data = load_previous_data()
     s = create_session()
 
-    # Завантажуємо alerts.org.ua одразу для всіх черг (всього 2 запити)
-    alerts_today_map, alerts_tomorrow_map = fetch_alerts_org_ua_all(s, now)
-
     qdata = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = []
@@ -370,17 +309,7 @@ def main():
             gpv_key = QUEUE_TO_GPV[q]
             prev_today = prev_data.get(tts_str, {}).get(gpv_key)
             prev_tomorrow = prev_data.get(tmt_str, {}).get(gpv_key)
-            futures.append(
-                executor.submit(
-                    process_queue,
-                    s,
-                    q,
-                    alerts_today_map.get(q),
-                    alerts_tomorrow_map.get(q),
-                    prev_today,
-                    prev_tomorrow
-                )
-            )
+            futures.append(executor.submit(process_queue, s, q, prev_today, prev_tomorrow))
 
         for f in futures:
             qdata.append(f.result())
