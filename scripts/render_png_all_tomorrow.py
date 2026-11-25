@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - таблиця усіх груп на завтра (авторський дизайн)
-Підтримує відстеження змін відносно першої публікації графіка на завтрашню дату:
+Рахує зміни відносно ОСТАННЬОГО опублікованого графіка на завтрашню дату:
 - Червона рамка: додалося відключення ("Більше відключень")
 - Зелена рамка: скасовано/зменшено відключення ("Менше відключень")
-Базовий стан зберігається в папці hash/gpv-all-tomorrow.state.json
 """
 
 import json
@@ -23,7 +22,7 @@ except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-TEMPLATE_VERSION = "v2-all-tomorrow-diff"
+TEMPLATE_VERSION = "v3-all-tomorrow-last-diff"
 
 # Авторська палітра кольорів
 BG_COLOR = '#FAF9F6'          # Теплий світлий фон полотна
@@ -58,7 +57,6 @@ KYIV_TZ = timezone(timedelta(hours=2))
 
 
 def format_group_row_label(gpv_key, sch_names):
-    """Перетворює 'Черга 1.1' або 'GPV1.1' -> 'Група 1.1'"""
     raw_name = sch_names.get(gpv_key, gpv_key)
     if 'Черга' in raw_name:
         return raw_name.replace('Черга', 'Група').replace(':', '').strip()
@@ -66,7 +64,7 @@ def format_group_row_label(gpv_key, sch_names):
     return f"Група {cleaned}"
 
 
-def load_baseline_state(hash_dir):
+def load_last_state(hash_dir):
     state_file = hash_dir / 'gpv-all-tomorrow.state.json'
     if state_file.exists():
         try:
@@ -76,7 +74,7 @@ def load_baseline_state(hash_dir):
     return {}
 
 
-def save_baseline_state(hash_dir, state_data):
+def save_last_state(hash_dir, state_data):
     hash_dir.mkdir(parents=True, exist_ok=True)
     state_file = hash_dir / 'gpv-all-tomorrow.state.json'
     try:
@@ -96,26 +94,25 @@ def outage_minutes(state):
     return 0
 
 
-def compute_group_diffs(current_slots, baseline_slots):
-    """Повертає {'1': 'more' | 'less', ...} відносно базового графіка"""
-    if not baseline_slots:
+def compute_group_diffs(current_slots, previous_slots):
+    if not previous_slots:
         return {}
 
     diffs = {}
     for i in range(1, 25):
         key = str(i)
         cur = current_slots.get(key, 'yes')
-        base = baseline_slots.get(key, 'yes')
+        prev = previous_slots.get(key, 'yes')
 
-        if cur == base:
+        if cur == prev:
             continue
 
         cur_min = outage_minutes(cur)
-        base_min = outage_minutes(base)
+        prev_min = outage_minutes(prev)
 
-        if cur_min > base_min:
+        if cur_min > prev_min:
             diffs[key] = 'more'
-        elif cur_min < base_min:
+        elif cur_min < prev_min:
             diffs[key] = 'less'
         else:
             diffs[key] = 'more'
@@ -124,7 +121,6 @@ def compute_group_diffs(current_slots, baseline_slots):
 
 
 def calculate_all_tomorrow_hash(tomorrow_data, all_diffs):
-    """Розраховує SHA256 хеш всіх даних на завтра, дифу та версії шаблону"""
     data_str = json.dumps({
         'template': TEMPLATE_VERSION,
         'tomorrow': tomorrow_data,
@@ -172,7 +168,6 @@ def save_date(hash_dir, date_str):
 
 
 def draw_outage_icon(ax, cx, cy, size, state, zorder=5):
-    """Малює контрастну перекреслену блискавку"""
     bolt_pts = [
         (0.06, -0.45),
         (-0.29, 0.04),
@@ -221,7 +216,6 @@ def draw_outage_icon(ax, cx, cy, size, state, zorder=5):
 
 
 def render_all_tomorrow_schedules(json_path, out_path=None):
-    """Рендерить усі групи на завтра в одну таблицю з індикацією змін"""
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -232,11 +226,8 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     today_ts = str(data.get('fact', {}).get('today'))
     tomorrow_ts = str(int(today_ts) + 86400)
 
-    print(f"[INFO] today_ts={today_ts}, tomorrow_ts={tomorrow_ts}")
-
     tomorrow_data = fact_data.get(tomorrow_ts, {})
     tomorrow_date = datetime.fromtimestamp(int(tomorrow_ts), tz=KYIV_TZ)
-    print(f"[INFO] Tomorrow date: {tomorrow_date.strftime('%d.%m.%Y %H:%M:%S')}")
 
     if out_path:
         out_p = Path(out_path)
@@ -250,7 +241,6 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     fetched_time_str = datetime.now(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
 
     gpv_keys = sorted([k for k in tomorrow_data if k.startswith('GPV')])
-    print(f"[INFO] Found {len(gpv_keys)} GPV schedules")
     num_schedules = len(gpv_keys)
 
     if num_schedules == 0:
@@ -263,53 +253,48 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
         for gkey in gpv_keys
     )
 
-    baseline_state = load_baseline_state(hash_dir)
-    if baseline_state.get('date') != tomorrow_date_code:
-        # Нова дата: фіксуємо базовий стан тільки коли з'являться реальні відключення
+    last_state = load_last_state(hash_dir)
+    if last_state.get('date') != tomorrow_date_code:
         if has_real_tomorrow:
-            baseline_groups = {
+            saved_groups = {
                 gkey: tomorrow_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
                 for gkey in gpv_keys
             }
-            baseline_state = {
+            last_state = {
                 'date': tomorrow_date_code,
-                'groups': baseline_groups
+                'groups': saved_groups,
+                'diffs': {}
             }
-            save_baseline_state(hash_dir, baseline_state)
+            save_last_state(hash_dir, last_state)
         else:
-            baseline_state = {'date': None, 'groups': {}}
+            last_state = {'date': None, 'groups': {}, 'diffs': {}}
     elif has_real_tomorrow:
-        baseline_groups = baseline_state.setdefault('groups', {})
-        updated_base = False
-        for gkey in gpv_keys:
-            if gkey not in baseline_groups:
-                baseline_groups[gkey] = tomorrow_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
-                updated_base = True
-        if updated_base:
-            save_baseline_state(hash_dir, baseline_state)
+        saved_groups = last_state.setdefault('groups', {})
+        saved_diffs = last_state.setdefault('diffs', {})
+        state_modified = False
 
-    # Обчислюємо зміни для кожної групи відносно першої публікації на завтра
-    all_diffs = {}
-    has_any_diff = False
-    if baseline_state.get('date') == tomorrow_date_code:
         for gkey in gpv_keys:
             cur_slots = tomorrow_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
-            base_slots = baseline_state.get('groups', {}).get(gkey, {})
-            g_diffs = compute_group_diffs(cur_slots, base_slots)
-            all_diffs[gkey] = g_diffs
-            if g_diffs:
-                has_any_diff = True
+            if gkey not in saved_groups:
+                saved_groups[gkey] = cur_slots
+                saved_diffs[gkey] = {}
+                state_modified = True
+            elif cur_slots != saved_groups[gkey]:
+                saved_diffs[gkey] = compute_group_diffs(cur_slots, saved_groups[gkey])
+                saved_groups[gkey] = cur_slots
+                state_modified = True
+
+        if state_modified:
+            save_last_state(hash_dir, last_state)
+
+    all_diffs = last_state.get('diffs', {}) if last_state.get('date') == tomorrow_date_code else {}
+    has_any_diff = any(bool(d) for d in all_diffs.values())
 
     new_hash = calculate_all_tomorrow_hash(tomorrow_data, all_diffs)
     prev_hash = load_previous_hash(hash_dir)
     prev_date = load_previous_date(hash_dir)
 
     output_file = out_p / 'gpv-all-tomorrow.png'
-
-    print(f"[INFO] New hash: {new_hash[:16]}...")
-    print(f"[INFO] Prev hash: {prev_hash[:16] if prev_hash else 'None'}...")
-    print(f"[INFO] Prev date: {prev_date}, Tomorrow date: {tomorrow_date_code}")
-    print(f"[INFO] File exists: {output_file.exists()}")
 
     date_changed = (prev_date != tomorrow_date_code)
     hash_changed = (new_hash != prev_hash)
@@ -511,16 +496,16 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     box_size = 0.78
 
     legend_items = [
-        ('yes', 'Світло є', 2.85),
-        ('no', 'Світла нема', 3.25),
-        ('first', 'Перші 30 хв.', 3.30),
-        ('second', 'Другі 30 хв.', 3.45),
+        ('yes', 'Світло є', 2.80),
+        ('no', 'Світла нема', 3.20),
+        ('first', 'Перші 30 хв.', 3.25),
+        ('second', 'Другі 30 хв.', 3.35),
     ]
 
     if has_any_diff:
         legend_items.extend([
-            ('more', 'Більше відключень', 4.10),
-            ('less', 'Менше відключень', 3.90),
+            ('more', 'Більше відключень', 4.45),
+            ('less', 'Менше відключень', 4.20),
         ])
 
     curr_x = tx
