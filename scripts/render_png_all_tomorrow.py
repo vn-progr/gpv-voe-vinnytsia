@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - таблиця усіх груп на завтра (авторський дизайн)
-Рахує зміни відносно ОСТАННЬОГО опублікованого графіка на завтрашню дату:
+Рахує зміни відносно ОСТАННЬОГО опублікованого графіка на завтрашню дату
+(використовує спільний файл станів hash/gpv-all.state.json разом із today):
 - Червона рамка: додалося відключення ("Більше відключень")
 - Зелена рамка: скасовано/зменшено відключення ("Менше відключень")
 """
@@ -22,7 +23,7 @@ except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-TEMPLATE_VERSION = "v3-all-tomorrow-last-diff"
+TEMPLATE_VERSION = "v4-all-tomorrow-shared-state"
 
 # Авторська палітра кольорів
 BG_COLOR = '#FAF9F6'          # Теплий світлий фон полотна
@@ -57,6 +58,7 @@ KYIV_TZ = timezone(timedelta(hours=2))
 
 
 def format_group_row_label(gpv_key, sch_names):
+    """Перетворює 'Черга 1.1' або 'GPV1.1' -> 'Група 1.1'"""
     raw_name = sch_names.get(gpv_key, gpv_key)
     if 'Черга' in raw_name:
         return raw_name.replace('Черга', 'Група').replace(':', '').strip()
@@ -65,7 +67,7 @@ def format_group_row_label(gpv_key, sch_names):
 
 
 def load_last_state(hash_dir):
-    state_file = hash_dir / 'gpv-all-tomorrow.state.json'
+    state_file = hash_dir / 'gpv-all.state.json'
     if state_file.exists():
         try:
             return json.loads(state_file.read_text(encoding='utf-8'))
@@ -76,7 +78,7 @@ def load_last_state(hash_dir):
 
 def save_last_state(hash_dir, state_data):
     hash_dir.mkdir(parents=True, exist_ok=True)
-    state_file = hash_dir / 'gpv-all-tomorrow.state.json'
+    state_file = hash_dir / 'gpv-all.state.json'
     try:
         state_file.write_text(
             json.dumps(state_data, ensure_ascii=False, indent=2, sort_keys=True),
@@ -168,6 +170,7 @@ def save_date(hash_dir, date_str):
 
 
 def draw_outage_icon(ax, cx, cy, size, state, zorder=5):
+    """Малює контрастну перекреслену блискавку"""
     bolt_pts = [
         (0.06, -0.45),
         (-0.29, 0.04),
@@ -216,6 +219,7 @@ def draw_outage_icon(ax, cx, cy, size, state, zorder=5):
 
 
 def render_all_tomorrow_schedules(json_path, out_path=None):
+    """Рендерить усі групи на завтра в одну таблицю з індикацією змін"""
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -226,8 +230,11 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     today_ts = str(data.get('fact', {}).get('today'))
     tomorrow_ts = str(int(today_ts) + 86400)
 
+    print(f"[INFO] today_ts={today_ts}, tomorrow_ts={tomorrow_ts}")
+
     tomorrow_data = fact_data.get(tomorrow_ts, {})
     tomorrow_date = datetime.fromtimestamp(int(tomorrow_ts), tz=KYIV_TZ)
+    print(f"[INFO] Tomorrow date: {tomorrow_date.strftime('%d.%m.%Y %H:%M:%S')}")
 
     if out_path:
         out_p = Path(out_path)
@@ -241,6 +248,7 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     fetched_time_str = datetime.now(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
 
     gpv_keys = sorted([k for k in tomorrow_data if k.startswith('GPV')])
+    print(f"[INFO] Found {len(gpv_keys)} GPV schedules")
     num_schedules = len(gpv_keys)
 
     if num_schedules == 0:
@@ -253,25 +261,25 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
         for gkey in gpv_keys
     )
 
-    last_state = load_last_state(hash_dir)
-    if last_state.get('date') != tomorrow_date_code:
+    # Завантажуємо спільний стан по датах (gpv-all.state.json)
+    all_states = load_last_state(hash_dir)
+    state_modified = False
+
+    day_entry = all_states.get(tomorrow_date_code)
+    if not isinstance(day_entry, dict) or 'groups' not in day_entry:
         if has_real_tomorrow:
             saved_groups = {
                 gkey: tomorrow_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
                 for gkey in gpv_keys
             }
-            last_state = {
-                'date': tomorrow_date_code,
-                'groups': saved_groups,
-                'diffs': {}
-            }
-            save_last_state(hash_dir, last_state)
+            day_entry = {'groups': saved_groups, 'diffs': {}}
+            all_states[tomorrow_date_code] = day_entry
+            state_modified = True
         else:
-            last_state = {'date': None, 'groups': {}, 'diffs': {}}
+            day_entry = {'groups': {}, 'diffs': {}}
     elif has_real_tomorrow:
-        saved_groups = last_state.setdefault('groups', {})
-        saved_diffs = last_state.setdefault('diffs', {})
-        state_modified = False
+        saved_groups = day_entry.setdefault('groups', {})
+        saved_diffs = day_entry.setdefault('diffs', {})
 
         for gkey in gpv_keys:
             cur_slots = tomorrow_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
@@ -284,10 +292,10 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
                 saved_groups[gkey] = cur_slots
                 state_modified = True
 
-        if state_modified:
-            save_last_state(hash_dir, last_state)
+    if state_modified:
+        save_last_state(hash_dir, all_states)
 
-    all_diffs = last_state.get('diffs', {}) if last_state.get('date') == tomorrow_date_code else {}
+    all_diffs = day_entry.get('diffs', {})
     has_any_diff = any(bool(d) for d in all_diffs.values())
 
     new_hash = calculate_all_tomorrow_hash(tomorrow_data, all_diffs)
@@ -295,6 +303,11 @@ def render_all_tomorrow_schedules(json_path, out_path=None):
     prev_date = load_previous_date(hash_dir)
 
     output_file = out_p / 'gpv-all-tomorrow.png'
+
+    print(f"[INFO] New hash: {new_hash[:16]}...")
+    print(f"[INFO] Prev hash: {prev_hash[:16] if prev_hash else 'None'}...")
+    print(f"[INFO] Prev date: {prev_date}, Tomorrow date: {tomorrow_date_code}")
+    print(f"[INFO] File exists: {output_file.exists()}")
 
     date_changed = (prev_date != tomorrow_date_code)
     hash_changed = (new_hash != prev_hash)
