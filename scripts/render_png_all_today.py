@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - таблиця усіх груп на сьогодні (авторський дизайн)
-Підтримує відстеження змін відносно першої публікації графіка на поточну дату:
+Рахує зміни відносно ОСТАННЬОГО опублікованого графіка на поточну дату:
 - Червона рамка: додалося відключення ("Більше відключень")
 - Зелена рамка: скасовано/зменшено відключення ("Менше відключень")
-Базовий стан зберігається в папці hash/gpv-all-today.state.json
 """
 
 import json
@@ -23,7 +22,7 @@ except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-TEMPLATE_VERSION = "v3-all-today-diff"
+TEMPLATE_VERSION = "v4-all-today-last-diff"
 
 # Авторська палітра кольорів
 BG_COLOR = '#FAF9F6'          # Теплий світлий фон полотна
@@ -58,7 +57,6 @@ KYIV_TZ = timezone(timedelta(hours=2))
 
 
 def format_group_row_label(gpv_key, sch_names):
-    """Перетворює 'Черга 1.1' або 'GPV1.1' -> 'Група 1.1'"""
     raw_name = sch_names.get(gpv_key, gpv_key)
     if 'Черга' in raw_name:
         return raw_name.replace('Черга', 'Група').replace(':', '').strip()
@@ -66,7 +64,7 @@ def format_group_row_label(gpv_key, sch_names):
     return f"Група {cleaned}"
 
 
-def load_baseline_state(hash_dir):
+def load_last_state(hash_dir):
     state_file = hash_dir / 'gpv-all-today.state.json'
     if state_file.exists():
         try:
@@ -76,7 +74,7 @@ def load_baseline_state(hash_dir):
     return {}
 
 
-def save_baseline_state(hash_dir, state_data):
+def save_last_state(hash_dir, state_data):
     hash_dir.mkdir(parents=True, exist_ok=True)
     state_file = hash_dir / 'gpv-all-today.state.json'
     try:
@@ -96,26 +94,25 @@ def outage_minutes(state):
     return 0
 
 
-def compute_group_diffs(current_slots, baseline_slots):
-    """Повертає {'1': 'more' | 'less', ...} відносно базового графіка"""
-    if not baseline_slots:
+def compute_group_diffs(current_slots, previous_slots):
+    if not previous_slots:
         return {}
 
     diffs = {}
     for i in range(1, 25):
         key = str(i)
         cur = current_slots.get(key, 'yes')
-        base = baseline_slots.get(key, 'yes')
+        prev = previous_slots.get(key, 'yes')
 
-        if cur == base:
+        if cur == prev:
             continue
 
         cur_min = outage_minutes(cur)
-        base_min = outage_minutes(base)
+        prev_min = outage_minutes(prev)
 
-        if cur_min > base_min:
+        if cur_min > prev_min:
             diffs[key] = 'more'
-        elif cur_min < base_min:
+        elif cur_min < prev_min:
             diffs[key] = 'less'
         else:
             diffs[key] = 'more'
@@ -124,7 +121,6 @@ def compute_group_diffs(current_slots, baseline_slots):
 
 
 def calculate_all_today_hash(today_data, all_diffs):
-    """Розраховує SHA256 хеш всіх даних на сьогодні, дифу та версії шаблону"""
     data_str = json.dumps({
         'template': TEMPLATE_VERSION,
         'today': today_data,
@@ -172,7 +168,6 @@ def save_date(hash_dir, date_str):
 
 
 def draw_outage_icon(ax, cx, cy, size, state, zorder=5):
-    """Малює контрастну перекреслену блискавку"""
     bolt_pts = [
         (0.06, -0.45),
         (-0.29, 0.04),
@@ -221,7 +216,6 @@ def draw_outage_icon(ax, cx, cy, size, state, zorder=5):
 
 
 def render_all_schedules(json_path, out_path=None):
-    """Рендерить усі групи на сьогодні в одну таблицю з індикацією змін"""
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -251,40 +245,42 @@ def render_all_schedules(json_path, out_path=None):
         print("ERROR: No GPV schedules found in data")
         return
 
-    # Завантажуємо базовий стан (першу публікацію на поточну дату)
-    baseline_state = load_baseline_state(hash_dir)
-    if baseline_state.get('date') != today_date_code:
-        # Новий день: зберігаємо поточні дані як базовий стан на сьогодні
-        baseline_groups = {
+    # Завантажуємо останній опублікований стан на поточну дату
+    last_state = load_last_state(hash_dir)
+    if last_state.get('date') != today_date_code:
+        # Новий день — фіксуємо початковий стан без рамок змін
+        saved_groups = {
             gkey: today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
             for gkey in gpv_keys
         }
-        baseline_state = {
+        last_state = {
             'date': today_date_code,
-            'groups': baseline_groups
+            'groups': saved_groups,
+            'diffs': {}
         }
-        save_baseline_state(hash_dir, baseline_state)
+        save_last_state(hash_dir, last_state)
     else:
-        # Додаємо групи, якщо якась з'явилася пізніше
-        baseline_groups = baseline_state.setdefault('groups', {})
-        updated_base = False
-        for gkey in gpv_keys:
-            if gkey not in baseline_groups:
-                baseline_groups[gkey] = today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
-                updated_base = True
-        if updated_base:
-            save_baseline_state(hash_dir, baseline_state)
+        saved_groups = last_state.setdefault('groups', {})
+        saved_diffs = last_state.setdefault('diffs', {})
+        state_modified = False
 
-    # Обчислюємо зміни для кожної групи відносно базового стану
-    all_diffs = {}
-    has_any_diff = False
-    for gkey in gpv_keys:
-        cur_slots = today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
-        base_slots = baseline_state.get('groups', {}).get(gkey, {})
-        g_diffs = compute_group_diffs(cur_slots, base_slots)
-        all_diffs[gkey] = g_diffs
-        if g_diffs:
-            has_any_diff = True
+        for gkey in gpv_keys:
+            cur_slots = today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
+            if gkey not in saved_groups:
+                saved_groups[gkey] = cur_slots
+                saved_diffs[gkey] = {}
+                state_modified = True
+            elif cur_slots != saved_groups[gkey]:
+                # Для цієї групи графік змінився — рахуємо різницю від попереднього та оновлюємо
+                saved_diffs[gkey] = compute_group_diffs(cur_slots, saved_groups[gkey])
+                saved_groups[gkey] = cur_slots
+                state_modified = True
+
+        if state_modified:
+            save_last_state(hash_dir, last_state)
+
+    all_diffs = last_state.get('diffs', {})
+    has_any_diff = any(bool(d) for d in all_diffs.values())
 
     new_hash = calculate_all_today_hash(today_data, all_diffs)
     prev_hash = load_previous_hash(hash_dir)
