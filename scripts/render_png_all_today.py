@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - таблиця усіх груп на сьогодні (авторський дизайн)
-Генерує PNG тільки якщо дані змінилися (за хешем) АБО якщо змінилася дата
-Хеші та дати зберігаються в папці hash/
+Підтримує відстеження змін відносно першої публікації графіка на поточну дату:
+- Червона рамка: додалося відключення ("Більше відключень")
+- Зелена рамка: скасовано/зменшено відключення ("Менше відключень")
+Базовий стан зберігається в папці hash/gpv-all-today.state.json
 """
 
 import json
@@ -21,7 +23,7 @@ except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-TEMPLATE_VERSION = "v2-all-today-contrast"
+TEMPLATE_VERSION = "v3-all-today-diff"
 
 # Авторська палітра кольорів
 BG_COLOR = '#FAF9F6'          # Теплий світлий фон полотна
@@ -35,6 +37,10 @@ HEADER_BORDER = '#334155'     # Лінії розділення годин у т
 OUTER_BORDER = '#94A3B8'      # Зовнішній контур таблиці
 TEXT_DARK = '#0F172A'         # Основний темний текст
 TEXT_MUTED = '#64748B'        # Приглушений текст для дати отримання
+
+# Кольори індикації змін
+DIFF_MORE_BORDER = '#DC2626'  # Червоний: більше відключень
+DIFF_LESS_BORDER = '#16A34A'  # Зелений: менше відключень
 
 BADGE_BG = '#FEF3C7'          # Теплий бурштиновий фон бейджа
 BADGE_BORDER = '#F59E0B'      # Янтарна рамка бейджа
@@ -60,11 +66,69 @@ def format_group_row_label(gpv_key, sch_names):
     return f"Група {cleaned}"
 
 
-def calculate_all_today_hash(today_data):
-    """Розраховує SHA256 хеш всіх даних на сьогодні та версії шаблону"""
+def load_baseline_state(hash_dir):
+    state_file = hash_dir / 'gpv-all-today.state.json'
+    if state_file.exists():
+        try:
+            return json.loads(state_file.read_text(encoding='utf-8'))
+        except Exception as e:
+            print(f"[WARN] Could not read state file {state_file}: {e}")
+    return {}
+
+
+def save_baseline_state(hash_dir, state_data):
+    hash_dir.mkdir(parents=True, exist_ok=True)
+    state_file = hash_dir / 'gpv-all-today.state.json'
+    try:
+        state_file.write_text(
+            json.dumps(state_data, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding='utf-8'
+        )
+    except Exception as e:
+        print(f"[WARN] Could not save state file {state_file}: {e}")
+
+
+def outage_minutes(state):
+    if state == 'no':
+        return 60
+    if state in ('first', 'second'):
+        return 30
+    return 0
+
+
+def compute_group_diffs(current_slots, baseline_slots):
+    """Повертає {'1': 'more' | 'less', ...} відносно базового графіка"""
+    if not baseline_slots:
+        return {}
+
+    diffs = {}
+    for i in range(1, 25):
+        key = str(i)
+        cur = current_slots.get(key, 'yes')
+        base = baseline_slots.get(key, 'yes')
+
+        if cur == base:
+            continue
+
+        cur_min = outage_minutes(cur)
+        base_min = outage_minutes(base)
+
+        if cur_min > base_min:
+            diffs[key] = 'more'
+        elif cur_min < base_min:
+            diffs[key] = 'less'
+        else:
+            diffs[key] = 'more'
+
+    return diffs
+
+
+def calculate_all_today_hash(today_data, all_diffs):
+    """Розраховує SHA256 хеш всіх даних на сьогодні, дифу та версії шаблону"""
     data_str = json.dumps({
         'template': TEMPLATE_VERSION,
-        'today': today_data
+        'today': today_data,
+        'diffs': all_diffs
     }, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(data_str.encode()).hexdigest()
 
@@ -157,7 +221,7 @@ def draw_outage_icon(ax, cx, cy, size, state, zorder=5):
 
 
 def render_all_schedules(json_path, out_path=None):
-    """Рендерить усі групи на сьогодні в одну таблицю"""
+    """Рендерить усі групи на сьогодні в одну таблицю з індикацією змін"""
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -176,15 +240,57 @@ def render_all_schedules(json_path, out_path=None):
         out_p = Path('.')
         hash_dir = out_p / 'hash'
 
-    new_hash = calculate_all_today_hash(today_data)
-    prev_hash = load_previous_hash(hash_dir)
-
-    output_file = out_p / 'gpv-all-today.png'
-
     today_date = datetime.fromtimestamp(int(today_ts), tz=KYIV_TZ)
     today_date_code = today_date.strftime('%Y-%m-%d')
     fetched_time_str = datetime.now(KYIV_TZ).strftime('%d.%m.%Y %H:%M')
+
+    gpv_keys = sorted([k for k in today_data if k.startswith('GPV')])
+    num_schedules = len(gpv_keys)
+
+    if num_schedules == 0:
+        print("ERROR: No GPV schedules found in data")
+        return
+
+    # Завантажуємо базовий стан (першу публікацію на поточну дату)
+    baseline_state = load_baseline_state(hash_dir)
+    if baseline_state.get('date') != today_date_code:
+        # Новий день: зберігаємо поточні дані як базовий стан на сьогодні
+        baseline_groups = {
+            gkey: today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
+            for gkey in gpv_keys
+        }
+        baseline_state = {
+            'date': today_date_code,
+            'groups': baseline_groups
+        }
+        save_baseline_state(hash_dir, baseline_state)
+    else:
+        # Додаємо групи, якщо якась з'явилася пізніше
+        baseline_groups = baseline_state.setdefault('groups', {})
+        updated_base = False
+        for gkey in gpv_keys:
+            if gkey not in baseline_groups:
+                baseline_groups[gkey] = today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
+                updated_base = True
+        if updated_base:
+            save_baseline_state(hash_dir, baseline_state)
+
+    # Обчислюємо зміни для кожної групи відносно базового стану
+    all_diffs = {}
+    has_any_diff = False
+    for gkey in gpv_keys:
+        cur_slots = today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
+        base_slots = baseline_state.get('groups', {}).get(gkey, {})
+        g_diffs = compute_group_diffs(cur_slots, base_slots)
+        all_diffs[gkey] = g_diffs
+        if g_diffs:
+            has_any_diff = True
+
+    new_hash = calculate_all_today_hash(today_data, all_diffs)
+    prev_hash = load_previous_hash(hash_dir)
     prev_date = load_previous_date(hash_dir)
+
+    output_file = out_p / 'gpv-all-today.png'
 
     date_changed = (prev_date != today_date_code)
     hash_changed = (new_hash != prev_hash)
@@ -193,7 +299,7 @@ def render_all_schedules(json_path, out_path=None):
         print("[REGEN] gpv-all-today.png (file not found)")
         regenerate = True
     elif hash_changed:
-        print("[REGEN] gpv-all-today.png (hash changed)")
+        print("[REGEN] gpv-all-today.png (hash/diffs changed)")
         regenerate = True
     elif date_changed:
         print(f"[REGEN] gpv-all-today.png (date changed: {prev_date} → {today_date_code})")
@@ -215,13 +321,6 @@ def render_all_schedules(json_path, out_path=None):
 
     today_str = f'{today_date.day:02d} {months_uk[today_date.month]}'
 
-    gpv_keys = sorted([k for k in today_data if k.startswith('GPV')])
-    num_schedules = len(gpv_keys)
-
-    if num_schedules == 0:
-        print("ERROR: No GPV schedules found in data")
-        return
-
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Liberation Sans']
     plt.rcParams['axes.unicode_minus'] = False
 
@@ -240,7 +339,6 @@ def render_all_schedules(json_path, out_path=None):
     total_w = table_w + 2 * side_margin
     total_h = table_h + top_margin + bottom_margin
 
-    # Висота фігури автоматично підлаштовується під кількість груп
     fig_height = 2.8 + (num_schedules * 0.56)
     fig, ax = plt.subplots(figsize=(15.8, fig_height), dpi=150)
     fig.patch.set_facecolor(BG_COLOR)
@@ -265,7 +363,6 @@ def render_all_schedules(json_path, out_path=None):
     ax.text(tx + 0.34, 0.66, 'Графік відключень · Вінницька область',
             fontsize=18.5, fontweight='bold', color=TEXT_DARK, va='center', ha='left')
 
-# Бейдж з датою праворуч
     badge_w = 5.3
     badge_h = 0.84
     badge_x = tx + table_w - badge_w
@@ -283,7 +380,7 @@ def render_all_schedules(json_path, out_path=None):
 
     ax.text(badge_x + badge_w - 0.42, badge_y + badge_h / 2, today_str,
             fontsize=14.8, fontweight='bold', color=TEXT_DARK, va='center', ha='right', zorder=4)
-    
+
     # === 2. ТАБЛИЦЯ ІЗ ТЕМНОЮ ШАПКОЮ ===
     corner_r = 0.26
     table_clip = FancyBboxPatch(
@@ -293,12 +390,10 @@ def render_all_schedules(json_path, out_path=None):
     )
     ax.add_patch(table_clip)
 
-    # Темна шапка
     hdr_bg = Rectangle((tx, ty), table_w, header_h, facecolor=HEADER_BG, edgecolor='none', zorder=1)
     ax.add_patch(hdr_bg)
     hdr_bg.set_clip_path(table_clip)
 
-    # Ліва колонка для назв груп
     left_col_bg = Rectangle((tx, ty + header_h), label_w, num_schedules * row_h,
                             facecolor=LEFT_COL_BG, edgecolor='none', zorder=1)
     ax.add_patch(left_col_bg)
@@ -347,7 +442,6 @@ def render_all_schedules(json_path, out_path=None):
             if state in ('no', 'first', 'second'):
                 draw_outage_icon(ax, sx + cell_w / 2, ry + row_h / 2, size=0.66, state=state, zorder=5)
 
-        # Горизонтальна лінія розділення між групами
         if row_idx > 0:
             line_h, = ax.plot([tx, tx + table_w], [ry, ry], color=BORDER_COLOR, linewidth=0.85, zorder=3)
             line_h.set_clip_path(table_clip)
@@ -360,6 +454,30 @@ def render_all_schedules(json_path, out_path=None):
 
         l_bot, = ax.plot([vx, vx], [ty + header_h, ty + table_h], color=BORDER_COLOR, linewidth=0.8, zorder=3)
         l_bot.set_clip_path(table_clip)
+
+    # === КОЛЬОРОВІ РАМКИ ЗМІН ПОВЕРХ СІТКИ ===
+    pad = 0.045
+    for row_idx, gkey in enumerate(gpv_keys):
+        ry = ty + header_h + row_idx * row_h
+        g_diffs = all_diffs.get(gkey, {})
+        for i, slot_num in enumerate(SLOTS):
+            diff_type = g_diffs.get(str(slot_num))
+            if not diff_type:
+                continue
+
+            sx = tx + label_w + i * cell_w
+            diff_color = DIFF_MORE_BORDER if diff_type == 'more' else DIFF_LESS_BORDER
+            diff_rect = Rectangle(
+                (sx + pad, ry + pad),
+                cell_w - 2 * pad,
+                row_h - 2 * pad,
+                facecolor='none',
+                edgecolor=diff_color,
+                linewidth=2.1,
+                zorder=5.5
+            )
+            ax.add_patch(diff_rect)
+            diff_rect.set_clip_path(table_clip)
 
     # Зовнішній контур таблиці
     outer_box = FancyBboxPatch(
@@ -374,16 +492,22 @@ def render_all_schedules(json_path, out_path=None):
     box_size = 0.78
 
     legend_items = [
-        ('yes', 'Світло є'),
-        ('no', 'Світла нема'),
-        ('first', 'Перші 30 хв.'),
-        ('second', 'Другі 30 хв.'),
+        ('yes', 'Світло є', 2.80),
+        ('no', 'Світла нема', 3.20),
+        ('first', 'Перші 30 хв.', 3.25),
+        ('second', 'Другі 30 хв.', 3.35),
     ]
 
+    if has_any_diff:
+        legend_items.extend([
+            ('more', 'Більше відключень', 4.45),
+            ('less', 'Менше відключень', 4.20),
+        ])
+
     curr_x = tx
-    for state, text_lbl in legend_items:
+    for state, text_lbl, step_w in legend_items:
         b_rect = Rectangle((curr_x, leg_y), box_size, box_size,
-                           facecolor=CELL_WHITE, edgecolor=OUTER_BORDER, linewidth=0.9, zorder=2)
+                           facecolor=CELL_WHITE, edgecolor='none', zorder=2)
         ax.add_patch(b_rect)
 
         if state == 'no':
@@ -399,21 +523,28 @@ def render_all_schedules(json_path, out_path=None):
                                facecolor=CELL_OUTAGE, edgecolor='none', zorder=3)
             ax.add_patch(f_rect)
 
-        border_rect = Rectangle((curr_x, leg_y), box_size, box_size,
-                                facecolor='none', edgecolor=OUTER_BORDER, linewidth=0.9, zorder=4)
+        if state == 'more':
+            border_rect = Rectangle((curr_x, leg_y), box_size, box_size,
+                                    facecolor='none', edgecolor=DIFF_MORE_BORDER, linewidth=2.1, zorder=4)
+        elif state == 'less':
+            border_rect = Rectangle((curr_x, leg_y), box_size, box_size,
+                                    facecolor='none', edgecolor=DIFF_LESS_BORDER, linewidth=2.1, zorder=4)
+        else:
+            border_rect = Rectangle((curr_x, leg_y), box_size, box_size,
+                                    facecolor='none', edgecolor=OUTER_BORDER, linewidth=0.9, zorder=4)
         ax.add_patch(border_rect)
 
-        if state != 'yes':
+        if state in ('no', 'first', 'second'):
             draw_outage_icon(ax, curr_x + box_size / 2, leg_y + box_size / 2, size=0.54, state=state, zorder=5)
 
-        ax.text(curr_x + box_size + 0.28, leg_y + box_size / 2, text_lbl,
-                fontsize=9.8, color=TEXT_DARK, va='center', ha='left')
+        ax.text(curr_x + box_size + 0.24, leg_y + box_size / 2, text_lbl,
+                fontsize=9.6, color=TEXT_DARK, va='center', ha='left')
 
-        curr_x += 3.55
+        curr_x += step_w
 
     display_time = last_updated if last_updated else fetched_time_str
     ax.text(tx + table_w, leg_y + box_size / 2, f'Дані отримано: {display_time}',
-            fontsize=10.0, color=TEXT_MUTED, style='italic', va='center', ha='right')
+            fontsize=9.8, color=TEXT_MUTED, style='italic', va='center', ha='right')
 
     # === ЗБЕРЕЖЕННЯ ===
     plt.savefig(output_file, facecolor=BG_COLOR, dpi=150, bbox_inches='tight', pad_inches=0.18)
