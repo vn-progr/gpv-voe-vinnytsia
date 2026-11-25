@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🔌 GPV VOE Вінниця - Dual-Source Parser (BezSvitla + KolyBude)
+🔌 GPV VOE Вінниця - Dual-Source Parser (KolyBude API + BezSvitla HTML)
 Парсить 12 черг з 2 ресурсів → data/Vinnytsiaoblenerho.json
 """
 import json
@@ -32,6 +32,7 @@ QUEUE_TO_GPV = {k: f"GPV{k}" for k in QUEUE_MAPPING}
 ALL_QUEUE_KEYS = list(QUEUE_MAPPING)
 KYIV_TZ = timezone(timedelta(hours=2))
 OUTPUT_FILE = "data/Vinnytsiaoblenerho.json"
+KOLYBUDE_API_URL = "https://kolybude.com/api/status?region=vinnytsia"
 
 def create_session():
     s = requests.Session()
@@ -45,7 +46,7 @@ def create_session():
     s.mount('https://', adapter)
     s.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9',
+        'Accept': 'application/json, text/html,application/xhtml+xml,*/*;q=0.9',
         'Accept-Language': 'uk,en;q=0.9',
     })
     return s
@@ -95,7 +96,50 @@ def intervals_to_slots(time_strings):
 def has_outages(slots):
     return bool(slots) and any(v != "yes" for v in slots.values())
 
-# --- Парсери для BezSvitla та KolyBude ---
+# --- Парсери для KolyBude API та BezSvitla HTML ---
+
+def fetch_kolybude_all(s, expected_today_str, expected_tomorrow_str):
+    """Один JSON-запит на всі 12 черг з kolybude.com/api/status."""
+    empty_map = {q: {'today': None, 'tomorrow': None} for q in ALL_QUEUE_KEYS}
+    try:
+        r = s.get(KOLYBUDE_API_URL, timeout=20)
+        if not r.ok:
+            log(f"  [kolybude] HTTP {r.status_code}")
+            return empty_map
+
+        payload = r.json()
+        published = payload.get("published", {})
+        schedules = payload.get("schedules", {})
+        api_today = payload.get("todayDate")
+        api_tomorrow = payload.get("tomorrowDate")
+
+        today_valid = bool(published.get("today")) and (not api_today or api_today == expected_today_str)
+        tomorrow_valid = bool(published.get("tomorrow")) and (not api_tomorrow or api_tomorrow == expected_tomorrow_str)
+
+        log(f"  [kolybude] API OK | today={api_today} (pub={published.get('today')}) | tomorrow={api_tomorrow} (pub={published.get('tomorrow')})")
+
+        result = {}
+        for q in ALL_QUEUE_KEYS:
+            q_sched = schedules.get(q, {})
+            today_slots = None
+            tomorrow_slots = None
+
+            if today_valid and "today" in q_sched:
+                raw_pairs = q_sched["today"] or []
+                intervals = [f"{pair[0]}-{pair[1]}" for pair in raw_pairs if len(pair) == 2]
+                today_slots = intervals_to_slots(intervals)
+
+            if tomorrow_valid and "tomorrow" in q_sched:
+                raw_pairs = q_sched["tomorrow"] or []
+                intervals = [f"{pair[0]}-{pair[1]}" for pair in raw_pairs if len(pair) == 2]
+                tomorrow_slots = intervals_to_slots(intervals)
+
+            result[q] = {'today': today_slots, 'tomorrow': tomorrow_slots}
+
+        return result
+    except Exception as e:
+        log(f"  [kolybude] API error: {e}")
+        return empty_map
 
 def parse_bezsvitla_html(html):
     soup = BeautifulSoup(html, 'html.parser')
@@ -119,52 +163,6 @@ def fetch_bezsvitla(s, q):
         }
     except Exception as e:
         log(f"  [bezsvitla] {q} error: {e}")
-        return {'today': None, 'tomorrow': None}
-
-def parse_kolybude_html(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    res = {'today': None, 'tomorrow': None}
-
-    for h3 in soup.find_all('h3'):
-        title = h3.get_text(strip=True)
-        if "Графік на сьогодні" in title:
-            day_key = 'today'
-        elif "Графік на завтра" in title:
-            day_key = 'tomorrow'
-        else:
-            continue
-
-        container = h3.find_parent('div', class_='mb-3') or h3.find_parent('div')
-        summary = None
-        while container:
-            summary = container.find(attrs={'data-testid': 'outage-summary'})
-            if summary:
-                break
-            container = container.parent
-
-        if not summary:
-            continue
-
-        intervals = []
-        for span in summary.find_all('span', recursive=False):
-            text = span.get_text(" ", strip=True)
-            if "Відключень не передбачено" in text:
-                intervals = []
-                break
-            if re.search(r'\d{1,2}:\d{2}\s*[–\-]\s*\d{1,2}:\d{2}', text):
-                intervals.append(text)
-
-        res[day_key] = intervals_to_slots(intervals)
-
-    return res
-
-def fetch_kolybude(s, q):
-    url = f"https://kolybude.com/vinnytsia?group={q}"
-    try:
-        r = s.get(url, timeout=20)
-        return parse_kolybude_html(r.text) if r.ok else {'today': None, 'tomorrow': None}
-    except Exception as e:
-        log(f"  [kolybude] {q} error: {e}")
         return {'today': None, 'tomorrow': None}
 
 # --- Логіка вибору найсвіжішого джерела ---
@@ -202,21 +200,16 @@ def pick_best_slots(sources_slots, prev_slots):
 
     return {str(i): "yes" for i in range(1, 25)}, "fallback"
 
-def process_queue(s, q, prev_today, prev_tomorrow):
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f_bez = ex.submit(fetch_bezsvitla, s, q)
-        f_kol = ex.submit(fetch_kolybude, s, q)
-
-        r_bez = f_bez.result()
-        r_kol = f_kol.result()
+def process_queue(s, q, r_kol, prev_today, prev_tomorrow):
+    r_bez = fetch_bezsvitla(s, q)
 
     today_candidates = {
-        'bezsvitla': r_bez['today'],
         'kolybude': r_kol['today'],
+        'bezsvitla': r_bez['today'],
     }
     tomorrow_candidates = {
-        'bezsvitla': r_bez['tomorrow'],
         'kolybude': r_kol['tomorrow'],
+        'bezsvitla': r_bez['tomorrow'],
     }
 
     best_today, src_today = pick_best_slots(today_candidates, prev_today)
@@ -293,14 +286,20 @@ def save_results(qd_list):
     return True
 
 def main():
-    log("🔌 GPV ВОЕ ВІННИЦЯ - Dual-Source Parser (BezSvitla + KolyBude)")
+    log("🔌 GPV ВОЕ ВІННИЦЯ - Dual-Source Parser (KolyBude API + BezSvitla)")
     now = datetime.now(KYIV_TZ)
     td = now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=KYIV_TZ)
+    tmt_dt = td + timedelta(days=1)
+
     tts_str = str(int(td.timestamp()))
-    tmt_str = str(int((td + timedelta(days=1)).timestamp()))
+    tmt_str = str(int(tmt_dt.timestamp()))
+    today_date_str = td.strftime('%Y-%m-%d')
+    tomorrow_date_str = tmt_dt.strftime('%Y-%m-%d')
 
     prev_data = load_previous_data()
     s = create_session()
+
+    kolybude_all = fetch_kolybude_all(s, today_date_str, tomorrow_date_str)
 
     qdata = []
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -309,7 +308,9 @@ def main():
             gpv_key = QUEUE_TO_GPV[q]
             prev_today = prev_data.get(tts_str, {}).get(gpv_key)
             prev_tomorrow = prev_data.get(tmt_str, {}).get(gpv_key)
-            futures.append(executor.submit(process_queue, s, q, prev_today, prev_tomorrow))
+            futures.append(
+                executor.submit(process_queue, s, q, kolybude_all[q], prev_today, prev_tomorrow)
+            )
 
         for f in futures:
             qdata.append(f.result())
