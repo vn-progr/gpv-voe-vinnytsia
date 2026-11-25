@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Schedule PNG Renderer - мобільна сітка 6x4 (1 або 2 дні поруч)
-Підтримує відстеження змін відносно першої публікації графіка на конкретну дату:
+Рахує зміни відносно ОСТАННЬОГО опублікованого графіка на цю дату:
 - Червона рамка: додалося відключення ("Більше відключень")
 - Зелена рамка: скасовано/зменшено відключення ("Менше відключень")
 """
@@ -22,7 +22,7 @@ except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-TEMPLATE_VERSION = "v14-mobile-cards-diff"
+TEMPLATE_VERSION = "v16-mobile-cards-last-diff"
 
 # Палітра кольорів
 BG_COLOR = '#FAF9F6'          # Теплий світлий фон полотна
@@ -87,7 +87,7 @@ def save_text_file(path, content):
         print(f"[WARN] Could not save {path}: {e}")
 
 
-def load_baseline_state(state_path):
+def load_last_state(state_path):
     if state_path.exists():
         try:
             return json.loads(state_path.read_text(encoding='utf-8'))
@@ -96,7 +96,7 @@ def load_baseline_state(state_path):
     return {}
 
 
-def save_baseline_state(state_path, state_data):
+def save_last_state(state_path, state_data):
     state_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         state_path.write_text(
@@ -115,29 +115,29 @@ def outage_minutes(state):
     return 0
 
 
-def compute_slot_diffs(current_slots, baseline_slots):
+def compute_slot_diffs(current_slots, previous_slots):
     """
     Повертає словник {'1': 'more' | 'less', ...}
-    відносно першої публікації графіка на цю дату.
+    відносно попереднього опублікованого графіка на цю дату.
     """
-    if not baseline_slots:
+    if not previous_slots:
         return {}
 
     diffs = {}
     for i in range(1, 25):
         key = str(i)
         cur = current_slots.get(key, 'yes')
-        base = baseline_slots.get(key, 'yes')
+        prev = previous_slots.get(key, 'yes')
 
-        if cur == base:
+        if cur == prev:
             continue
 
         cur_min = outage_minutes(cur)
-        base_min = outage_minutes(base)
+        prev_min = outage_minutes(prev)
 
-        if cur_min > base_min:
+        if cur_min > prev_min:
             diffs[key] = 'more'
-        elif cur_min < base_min:
+        elif cur_min < prev_min:
             diffs[key] = 'less'
         else:
             diffs[key] = 'more'
@@ -182,7 +182,7 @@ def draw_day_card(ax, cx, cy, card_w, day_title, slots_dict, diffs_dict):
     ax.text(cx + card_w / 2, cy + hdr_h / 2, day_title,
             fontsize=13.5, fontweight='bold', color=HEADER_TEXT, va='center', ha='center', zorder=4)
 
-    # Клітинки 00-01 .. 23-24
+    # Клітинки 00 - 01 .. 23 - 24
     for slot_idx in range(24):
         r = slot_idx // cols
         c = slot_idx % cols
@@ -224,7 +224,7 @@ def draw_day_card(ax, cx, cy, card_w, day_title, slots_dict, diffs_dict):
         txt_weight = 'bold' if is_outage else 'medium'
 
         ax.text(sx + cell_w / 2, sy + cell_h / 2, hour_label,
-                fontsize=12.8, fontweight=txt_weight, color=txt_color,
+                fontsize=12.0, fontweight=txt_weight, color=txt_color,
                 va='center', ha='center', zorder=5)
 
     # Чітка межа між шапкою та сіткою
@@ -332,33 +332,53 @@ def render_schedule(json_path, gpv_key=None, out_path=None):
         )
         tomorrow_slots = raw_tomorrow if has_tomorrow else {}
 
-        # Завантажуємо базовий стан (першу публікацію) для кожної дати
+        # Завантажуємо стан попередньої публікації: {'2026-11-25': {'slots': {...}, 'diffs': {...}}}
         state_file = hash_dir / format_state_filename(gkey)
-        baseline_state = load_baseline_state(state_file)
+        last_state = load_last_state(state_file)
         state_modified = False
 
         # Очищаємо застарілі дати
         valid_dates = {today_date_code, tomorrow_date_code}
-        for old_date in list(baseline_state.keys()):
+        for old_date in list(last_state.keys()):
             if old_date not in valid_dates:
-                del baseline_state[old_date]
+                del last_state[old_date]
                 state_modified = True
 
-        # Фіксуємо базовий стан, якщо дата з'явилася вперше
-        if today_date_code not in baseline_state:
-            baseline_state[today_date_code] = today_slots
-            state_modified = True
+        def resolve_day_state(date_code, cur_slots):
+            nonlocal state_modified
+            entry = last_state.get(date_code)
+            # Міграція зі старого формату state.json, якщо там були просто слоти без 'slots'/'diffs'
+            if isinstance(entry, dict) and 'slots' not in entry:
+                entry = {'slots': entry, 'diffs': {}}
 
-        if has_tomorrow and tomorrow_date_code not in baseline_state:
-            baseline_state[tomorrow_date_code] = tomorrow_slots
-            state_modified = True
+            if entry is None:
+                # Перша публікація цієї дати — фіксуємо без рамок змін
+                last_state[date_code] = {'slots': cur_slots, 'diffs': {}}
+                state_modified = True
+                return {}
+
+            prev_slots = entry.get('slots', {})
+            if cur_slots != prev_slots:
+                # Графік оновився! Рахуємо різницю від ОСТАННЬОГО опублікованого і оновлюємо збережений стан
+                new_diffs = compute_slot_diffs(cur_slots, prev_slots)
+                last_state[date_code] = {'slots': cur_slots, 'diffs': new_diffs}
+                state_modified = True
+                return new_diffs
+
+            # Графік не змінювався з моменту останнього оновлення — зберігаємо поточні рамки змін
+            return entry.get('diffs', {})
+
+        today_diffs = resolve_day_state(today_date_code, today_slots)
+        if has_tomorrow:
+            tomorrow_diffs = resolve_day_state(tomorrow_date_code, tomorrow_slots)
+        else:
+            tomorrow_diffs = {}
+            if tomorrow_date_code in last_state:
+                del last_state[tomorrow_date_code]
+                state_modified = True
 
         if state_modified:
-            save_baseline_state(state_file, baseline_state)
-
-        # Обчислюємо різницю відносно першої публікації
-        today_diffs = compute_slot_diffs(today_slots, baseline_state.get(today_date_code, {}))
-        tomorrow_diffs = compute_slot_diffs(tomorrow_slots, baseline_state.get(tomorrow_date_code, {})) if has_tomorrow else {}
+            save_last_state(state_file, last_state)
 
         has_any_diff = bool(today_diffs or tomorrow_diffs)
 
