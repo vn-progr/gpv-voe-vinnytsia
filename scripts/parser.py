@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 🔌 GPV VOE Вінниця - Dual-Source Parser (BezSvitla + KolyBude)
-Одночасно опитує 2 ресурси, зіставляє їх зі своїми попередніми станами
-(щоб брати найсвіжіше джерело без відкату назад) → data/Vinnytsiaoblenerho.json
+Одночасно опитує 2 ресурси, зіставляє їх зі станами в meta.sourcesCache
+та зберігає результат виключно у data/Vinnytsiaoblenerho.json
 """
 import json
 import os
@@ -35,7 +35,6 @@ QUEUE_TO_GPV = {k: f"GPV{k}" for k in QUEUE_MAPPING}
 ALL_QUEUE_KEYS = list(QUEUE_MAPPING)
 KYIV_TZ = timezone(timedelta(hours=2))
 OUTPUT_FILE = "data/Vinnytsiaoblenerho.json"
-SOURCES_CACHE_FILE = "data/sources_cache.json"
 
 
 def create_session():
@@ -52,6 +51,8 @@ def create_session():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9',
         'Accept-Language': 'uk,en;q=0.9',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
     })
     return s
 
@@ -182,63 +183,55 @@ def fetch_kolybude(s, q):
         return {'today': None, 'tomorrow': None}
 
 
-# --- Кеш джерел та зіставлення найсвіжішого графіка ---
+# --- Завантаження та зіставлення з data/Vinnytsiaoblenerho.json ---
 
-def load_previous_data():
+def load_previous_state():
     if not os.path.exists(OUTPUT_FILE):
-        return {}
+        return {}, {}
     try:
         with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        return raw.get("fact", {}).get("data", {})
+        fact_data = raw.get("fact", {}).get("data", {})
+        sources_cache = raw.get("meta", {}).get("sourcesCache", {})
+        return fact_data, sources_cache if isinstance(sources_cache, dict) else {}
     except Exception:
-        return {}
-
-
-def load_sources_cache():
-    if not os.path.exists(SOURCES_CACHE_FILE):
-        return {}
-    try:
-        with open(SOURCES_CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_sources_cache(cache):
-    os.makedirs("data", exist_ok=True)
-    with open(SOURCES_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2, sort_keys=True)
+        return {}, {}
 
 
 def pick_best_slots(sources_slots, prev_merged_slots, prev_per_source):
     """
-    Зіставляє два джерела з їхніми власними попередніми станами:
-    1. Шукає джерело, яке ЩОЙНО оновилося (його нові дані != його старим даним) і містить відключення.
-    2. Якщо жодне не змінилося (або змінилося лише до порожнього) — утримує поточний збережений графік
-       (prev_merged_slots), якщо він непорожній, щоб застарілий сайт не відкотив свіжий графік назад.
-    3. Якщо попереднього непорожнього графіка ще немає — бере перше джерело з відключеннями.
-    4. Якщо на обох порожньо — повертає порожній графік.
+    Зіставляє два джерела з їхніми попередніми станами із meta.sourcesCache:
+    1. Якщо обидва джерела доступні, мають відключення і ЗБІГАЮТЬСЯ між собою — це 100% актуальний графік.
+    2. Якщо одне з джерел оновилося відносно свого попереднього стану (або з'явилося вперше для цієї дати)
+       і відрізняється від поточного JSON — беремо його.
+    3. Інакше утримуємо поточний збережений графік (prev_merged_slots), щоб застарілий сайт не відкотив зміни.
     """
     valid_sources = {name: sl for name, sl in sources_slots.items() if sl is not None}
     non_empty = {name: sl for name, sl in valid_sources.items() if has_outages(sl)}
 
-    # 1. Перевіряємо, чи якесь із джерел щойно змінилося відносно САМОГО СЕБЕ
+    # 1. Якщо кілька джерел дають відключення і вони ідентичні — сайти синхронізовані, беремо їх
+    if len(non_empty) >= 2:
+        unique_schedules = list(non_empty.values())
+        if all(sl == unique_schedules[0] for sl in unique_schedules[1:]):
+            names_label = "+".join(non_empty.keys())
+            status = "synced" if unique_schedules[0] != prev_merged_slots else "ok"
+            return unique_schedules[0], f"{names_label} ({status})"
+
+    # 2. Перевіряємо, чи якесь із джерел оновилося відносно САМОГО СЕБЕ (або з'явилося вперше для цієї дати)
     changed_non_empty = []
     for name, sl in non_empty.items():
         old_src_sl = prev_per_source.get(name)
-        if old_src_sl is not None and sl != old_src_sl:
+        if old_src_sl is None or sl != old_src_sl:
             changed_non_empty.append((name, sl))
 
     if changed_non_empty:
-        # Якщо змінилося одне джерело — беремо його; якщо обидва — беремо те, що відрізняється від поточного JSON
         for name, sl in changed_non_empty:
             if sl != prev_merged_slots:
                 return sl, f"{name} (updated)"
         name, sl = changed_non_empty[0]
         return sl, f"{name} (synced)"
 
-    # 2. Якщо жодне джерело не змінилося відносно себе, але вже є збережений непорожній графік — тримаємо його
+    # 3. Якщо жодне джерело не змінилося відносно себе, але вже є збережений непорожній графік — тримаємо його
     if prev_merged_slots and has_outages(prev_merged_slots):
         # Перевіряємо, чи не скасували відключення ОДНОЧАСНО на всіх доступних джерелах
         if valid_sources and not non_empty and all(
@@ -252,12 +245,12 @@ def pick_best_slots(sources_slots, prev_merged_slots, prev_per_source):
         src_label = "+".join(matching) if matching else "cached"
         return prev_merged_slots, src_label
 
-    # 3. Перший запуск або досі не було відключень: беремо перше непорожнє джерело
+    # 4. Перший запуск або досі не було відключень: беремо перше непорожнє джерело
     if non_empty:
         first_name = next(iter(non_empty))
         return non_empty[first_name], first_name
 
-    # 4. Обидва джерела порожні
+    # 5. Обидва джерела порожні
     if valid_sources:
         first_name = next(iter(valid_sources))
         return valid_sources[first_name], f"{first_name} (empty)"
@@ -285,7 +278,6 @@ def process_queue(s, q, prev_today, prev_tomorrow, cache_today_q, cache_tomorrow
     best_today, src_today = pick_best_slots(today_candidates, prev_today, cache_today_q)
     best_tomorrow, src_tomorrow = pick_best_slots(tomorrow_candidates, prev_tomorrow, cache_tomorrow_q)
 
-    # Оновлюємо кеш джерел тільки тими відповідями, які успішно завантажилися (не None)
     new_cache_today = dict(cache_today_q)
     for name, sl in today_candidates.items():
         if sl is not None:
@@ -323,7 +315,7 @@ def transform_to_gpv(qd, now):
     return data
 
 
-def save_results(qd_list, now):
+def save_results(qd_list, sources_cache, now):
     data = transform_to_gpv(qd_list, now)
 
     result = {
@@ -358,7 +350,8 @@ def save_results(qd_list, now):
         "regionAffiliation": "Вінницька область",
         "meta": {
             "schemaVersion": "1.0.0",
-            "contentHash": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+            "contentHash": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
+            "sourcesCache": sources_cache
         }
     }
 
@@ -377,8 +370,7 @@ def main():
     tts_str = str(int(td.timestamp()))
     tmt_str = str(int((td + timedelta(days=1)).timestamp()))
 
-    prev_data = load_previous_data()
-    sources_cache = load_sources_cache()
+    prev_data, sources_cache = load_previous_state()
 
     # Очищаємо застарілі дати в кеші джерел (залишаємо тільки сьогодні і завтра)
     valid_ts = {tts_str, tmt_str}
@@ -410,8 +402,7 @@ def main():
             clean_cache[tts_str][gpv_key] = res['cache_today']
             clean_cache[tmt_str][gpv_key] = res['cache_tomorrow']
 
-    save_sources_cache(clean_cache)
-    save_results(qdata, now)
+    save_results(qdata, clean_cache, now)
     log("🎉 ГОТОВО!")
 
 
