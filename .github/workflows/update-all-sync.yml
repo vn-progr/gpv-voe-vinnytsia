@@ -28,7 +28,7 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 lxml matplotlib numpy pillow
+          pip install requests curl_cffi beautifulsoup4 lxml matplotlib numpy pillow
 
       - name: 🔄 Parse BezSvitla & KolyBude (scripts/parser.py)
         run: |
