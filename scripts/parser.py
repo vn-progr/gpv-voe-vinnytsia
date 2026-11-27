@@ -16,6 +16,12 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CFFI = True
+except ImportError:
+    HAS_CFFI = False
+
 
 def log(msg):
     print(msg)
@@ -146,12 +152,27 @@ def fetch_bezsvitla(s, q):
 def fetch_kolybude_all(s, expected_today_str, expected_tomorrow_str):
     """
     Отримує одним запитом https://kolybude.com/api/status?region=vinnytsia
-    графіки для всіх 12 черг і зіставляє їх за датами todayDate / tomorrowDate.
+    графіки для всіх 12 черг через TLS-імітацію Chrome (обхід Cloudflare 403).
     """
     empty_res = {q: {'today': None, 'tomorrow': None} for q in ALL_QUEUE_KEYS}
+    headers = {
+        'Referer': 'https://kolybude.com/vinnytsia',
+        'Origin': 'https://kolybude.com',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'uk,en;q=0.9',
+    }
     try:
-        r = s.get(KOLYBUDE_API_URL, timeout=20)
-        if not r.ok:
+        if HAS_CFFI:
+            r = cffi_requests.get(
+                KOLYBUDE_API_URL,
+                headers=headers,
+                impersonate="chrome",
+                timeout=20
+            )
+        else:
+            r = s.get(KOLYBUDE_API_URL, headers=headers, timeout=20)
+
+        if r.status_code != 200:
             log(f"  [kolybude] HTTP {r.status_code}")
             return empty_res
 
