@@ -22,7 +22,7 @@ except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-TEMPLATE_VERSION = "v16-mobile-cards-last-diff"
+TEMPLATE_VERSION = "v18-mobile-cards-per-group-diff"
 
 # Палітра кольорів
 BG_COLOR = '#FAF9F6'          # Теплий світлий фон полотна
@@ -280,6 +280,14 @@ def draw_day_card(ax, cx, cy, card_w, day_title, slots_dict, diffs_dict):
     return card_h
 
 
+def has_real_outages(raw_slots):
+    return (
+        isinstance(raw_slots, dict)
+        and len(raw_slots) > 0
+        and any(v in ('no', 'first', 'second') for v in raw_slots.values())
+    )
+
+
 def render_schedule(json_path, gpv_key=None, out_path=None):
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -325,14 +333,10 @@ def render_schedule(json_path, gpv_key=None, out_path=None):
         today_slots = today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
         raw_tomorrow = tomorrow_data.get(gkey)
 
-        has_tomorrow = (
-            isinstance(raw_tomorrow, dict)
-            and len(raw_tomorrow) > 0
-            and any(v in ('no', 'first', 'second') for v in raw_tomorrow.values())
-        )
+        has_tomorrow = has_real_outages(raw_tomorrow)
         tomorrow_slots = raw_tomorrow if has_tomorrow else {}
 
-        # Завантажуємо стан попередньої публікації: {'2026-11-25': {'slots': {...}, 'diffs': {...}}}
+        # Завантажуємо стан попередньої публікації ТІЛЬКИ цієї групи
         state_file = hash_dir / format_state_filename(gkey)
         last_state = load_last_state(state_file)
         state_modified = False
@@ -344,10 +348,23 @@ def render_schedule(json_path, gpv_key=None, out_path=None):
                 del last_state[old_date]
                 state_modified = True
 
+        def get_saved_slots(date_code):
+            entry = last_state.get(date_code)
+            if isinstance(entry, dict):
+                return entry.get('slots', entry) if 'slots' in entry else entry
+            return None
+
+        prev_today_slots = get_saved_slots(today_date_code)
+        prev_tomorrow_slots = get_saved_slots(tomorrow_date_code)
+
+        # Перевіряємо, чи змінився графік саме цієї групи (сьогодні або завтра)
+        today_changed = (prev_today_slots is not None and today_slots != prev_today_slots)
+        tomorrow_changed = (has_tomorrow and prev_tomorrow_slots is not None and tomorrow_slots != prev_tomorrow_slots)
+        group_updated = today_changed or tomorrow_changed
+
         def resolve_day_state(date_code, cur_slots):
             nonlocal state_modified
             entry = last_state.get(date_code)
-            # Міграція зі старого формату state.json, якщо там були просто слоти без 'slots'/'diffs'
             if isinstance(entry, dict) and 'slots' not in entry:
                 entry = {'slots': entry, 'diffs': {}}
 
@@ -359,13 +376,19 @@ def render_schedule(json_path, gpv_key=None, out_path=None):
 
             prev_slots = entry.get('slots', {})
             if cur_slots != prev_slots:
-                # Графік оновився! Рахуємо різницю від ОСТАННЬОГО опублікованого і оновлюємо збережений стан
+                # Графік цієї групи на цю дату оновився
                 new_diffs = compute_slot_diffs(cur_slots, prev_slots)
                 last_state[date_code] = {'slots': cur_slots, 'diffs': new_diffs}
                 state_modified = True
                 return new_diffs
 
-            # Графік не змінювався з моменту останнього оновлення — зберігаємо поточні рамки змін
+            # Якщо в цієї групи оновився сусідній день (наприклад, вийшов графік на завтра),
+            # очищаємо старі рамки на цьому дні, щоб не висіли минулі підсвітки
+            if group_updated and entry.get('diffs'):
+                last_state[date_code] = {'slots': prev_slots, 'diffs': {}}
+                state_modified = True
+                return {}
+
             return entry.get('diffs', {})
 
         today_diffs = resolve_day_state(today_date_code, today_slots)
