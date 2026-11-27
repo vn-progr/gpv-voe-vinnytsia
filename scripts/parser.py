@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-🔌 GPV VOE Вінниця - Dual-Source Parser (KolyBude API + BezSvitla HTML)
-Парсить 12 черг з 2 ресурсів → data/Vinnytsiaoblenerho.json
+🔌 GPV VOE Вінниця - Dual-Source Parser (BezSvitla + KolyBude)
+Одночасно опитує 2 ресурси, зіставляє їх зі своїми попередніми станами
+(щоб брати найсвіжіше джерело без відкату назад) → data/Vinnytsiaoblenerho.json
 """
 import json
 import os
@@ -15,9 +16,11 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+
 def log(msg):
     print(msg)
     sys.stdout.flush()
+
 
 QUEUE_MAPPING = {
     "1.1": "1.1", "1.2": "1.2",
@@ -32,7 +35,8 @@ QUEUE_TO_GPV = {k: f"GPV{k}" for k in QUEUE_MAPPING}
 ALL_QUEUE_KEYS = list(QUEUE_MAPPING)
 KYIV_TZ = timezone(timedelta(hours=2))
 OUTPUT_FILE = "data/Vinnytsiaoblenerho.json"
-KOLYBUDE_API_URL = "https://kolybude.com/api/status?region=vinnytsia"
+SOURCES_CACHE_FILE = "data/sources_cache.json"
+
 
 def create_session():
     s = requests.Session()
@@ -46,10 +50,11 @@ def create_session():
     s.mount('https://', adapter)
     s.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/html,application/xhtml+xml,*/*;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9',
         'Accept-Language': 'uk,en;q=0.9',
     })
     return s
+
 
 # --- Допоміжні функції перетворення часу у слоти ---
 
@@ -57,11 +62,14 @@ def parse_time_slot(t):
     m = re.search(r'(\d{1,2}):(\d{2})\s*[––\-\s–]\s*(\d{1,2}):(\d{2})', t)
     return tuple(map(int, m.groups())) if m else None
 
+
 def round_minutes_to_half_hour(minutes):
     return 30 if minutes >= 30 else 0
 
+
 def hour_to_slot(h):
     return 1 if h == 0 else h + 1
+
 
 def intervals_to_slots(time_strings):
     """Перетворює список рядків виду ['08:00-10:00', '14:00-16:00'] у слоти 1..24."""
@@ -93,53 +101,12 @@ def intervals_to_slots(time_strings):
 
     return slots
 
+
 def has_outages(slots):
     return bool(slots) and any(v != "yes" for v in slots.values())
 
-# --- Парсери для KolyBude API та BezSvitla HTML ---
 
-def fetch_kolybude_all(s, expected_today_str, expected_tomorrow_str):
-    """Один JSON-запит на всі 12 черг з kolybude.com/api/status."""
-    empty_map = {q: {'today': None, 'tomorrow': None} for q in ALL_QUEUE_KEYS}
-    try:
-        r = s.get(KOLYBUDE_API_URL, timeout=20)
-        if not r.ok:
-            log(f"  [kolybude] HTTP {r.status_code}")
-            return empty_map
-
-        payload = r.json()
-        published = payload.get("published", {})
-        schedules = payload.get("schedules", {})
-        api_today = payload.get("todayDate")
-        api_tomorrow = payload.get("tomorrowDate")
-
-        today_valid = bool(published.get("today")) and (not api_today or api_today == expected_today_str)
-        tomorrow_valid = bool(published.get("tomorrow")) and (not api_tomorrow or api_tomorrow == expected_tomorrow_str)
-
-        log(f"  [kolybude] API OK | today={api_today} (pub={published.get('today')}) | tomorrow={api_tomorrow} (pub={published.get('tomorrow')})")
-
-        result = {}
-        for q in ALL_QUEUE_KEYS:
-            q_sched = schedules.get(q, {})
-            today_slots = None
-            tomorrow_slots = None
-
-            if today_valid and "today" in q_sched:
-                raw_pairs = q_sched["today"] or []
-                intervals = [f"{pair[0]}-{pair[1]}" for pair in raw_pairs if len(pair) == 2]
-                today_slots = intervals_to_slots(intervals)
-
-            if tomorrow_valid and "tomorrow" in q_sched:
-                raw_pairs = q_sched["tomorrow"] or []
-                intervals = [f"{pair[0]}-{pair[1]}" for pair in raw_pairs if len(pair) == 2]
-                tomorrow_slots = intervals_to_slots(intervals)
-
-            result[q] = {'today': today_slots, 'tomorrow': tomorrow_slots}
-
-        return result
-    except Exception as e:
-        log(f"  [kolybude] API error: {e}")
-        return empty_map
+# --- Парсери для BezSvitla та KolyBude ---
 
 def parse_bezsvitla_html(html):
     soup = BeautifulSoup(html, 'html.parser')
@@ -149,6 +116,7 @@ def parse_bezsvitla_html(html):
         if ts:
             intervals.append(ts.get_text(strip=True))
     return intervals_to_slots(intervals)
+
 
 def fetch_bezsvitla(s, q):
     slug = q.replace('.', '-')
@@ -165,7 +133,56 @@ def fetch_bezsvitla(s, q):
         log(f"  [bezsvitla] {q} error: {e}")
         return {'today': None, 'tomorrow': None}
 
-# --- Логіка вибору найсвіжішого джерела ---
+
+def parse_kolybude_html(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    res = {'today': None, 'tomorrow': None}
+
+    for h3 in soup.find_all('h3'):
+        title = h3.get_text(strip=True)
+        if "Графік на сьогодні" in title:
+            day_key = 'today'
+        elif "Графік на завтра" in title:
+            day_key = 'tomorrow'
+        else:
+            continue
+
+        container = h3.find_parent('div', class_='mb-3') or h3.find_parent('div')
+        summary = None
+        while container:
+            summary = container.find(attrs={'data-testid': 'outage-summary'})
+            if summary:
+                break
+            container = container.parent
+
+        if not summary:
+            continue
+
+        intervals = []
+        for span in summary.find_all('span', recursive=False):
+            text = span.get_text(" ", strip=True)
+            if "Відключень не передбачено" in text:
+                intervals = []
+                break
+            if re.search(r'\d{1,2}:\d{2}\s*[–\-]\s*\d{1,2}:\d{2}', text):
+                intervals.append(text)
+
+        res[day_key] = intervals_to_slots(intervals)
+
+    return res
+
+
+def fetch_kolybude(s, q):
+    url = f"https://kolybude.com/vinnytsia?group={q}"
+    try:
+        r = s.get(url, timeout=20)
+        return parse_kolybude_html(r.text) if r.ok else {'today': None, 'tomorrow': None}
+    except Exception as e:
+        log(f"  [kolybude] {q} error: {e}")
+        return {'today': None, 'tomorrow': None}
+
+
+# --- Кеш джерел та зіставлення найсвіжішого графіка ---
 
 def load_previous_data():
     if not os.path.exists(OUTPUT_FILE):
@@ -177,50 +194,117 @@ def load_previous_data():
     except Exception:
         return {}
 
-def pick_best_slots(sources_slots, prev_slots):
+
+def load_sources_cache():
+    if not os.path.exists(SOURCES_CACHE_FILE):
+        return {}
+    try:
+        with open(SOURCES_CACHE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_sources_cache(cache):
+    os.makedirs("data", exist_ok=True)
+    with open(SOURCES_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def pick_best_slots(sources_slots, prev_merged_slots, prev_per_source):
     """
-    1. Шукає джерело з непорожніми даними, які відрізняються від попереднього збереження.
-    2. Якщо змін немає — повертає перше джерело з непорожніми даними.
-    3. Якщо на обох джерелах порожньо — повертає порожній графік (усі 'yes').
+    Зіставляє два джерела з їхніми власними попередніми станами:
+    1. Шукає джерело, яке ЩОЙНО оновилося (його нові дані != його старим даним) і містить відключення.
+    2. Якщо жодне не змінилося (або змінилося лише до порожнього) — утримує поточний збережений графік
+       (prev_merged_slots), якщо він непорожній, щоб застарілий сайт не відкотив свіжий графік назад.
+    3. Якщо попереднього непорожнього графіка ще немає — бере перше джерело з відключеннями.
+    4. Якщо на обох порожньо — повертає порожній графік.
     """
     valid_sources = {name: sl for name, sl in sources_slots.items() if sl is not None}
     non_empty = {name: sl for name, sl in valid_sources.items() if has_outages(sl)}
 
+    # 1. Перевіряємо, чи якесь із джерел щойно змінилося відносно САМОГО СЕБЕ
+    changed_non_empty = []
+    for name, sl in non_empty.items():
+        old_src_sl = prev_per_source.get(name)
+        if old_src_sl is not None and sl != old_src_sl:
+            changed_non_empty.append((name, sl))
+
+    if changed_non_empty:
+        # Якщо змінилося одне джерело — беремо його; якщо обидва — беремо те, що відрізняється від поточного JSON
+        for name, sl in changed_non_empty:
+            if sl != prev_merged_slots:
+                return sl, f"{name} (updated)"
+        name, sl = changed_non_empty[0]
+        return sl, f"{name} (synced)"
+
+    # 2. Якщо жодне джерело не змінилося відносно себе, але вже є збережений непорожній графік — тримаємо його
+    if prev_merged_slots and has_outages(prev_merged_slots):
+        # Перевіряємо, чи не скасували відключення ОДНОЧАСНО на всіх доступних джерелах
+        if valid_sources and not non_empty and all(
+            prev_per_source.get(name) is not None and valid_sources[name] != prev_per_source[name]
+            for name in valid_sources
+        ):
+            first_name = next(iter(valid_sources))
+            return valid_sources[first_name], f"{first_name} (cleared)"
+
+        matching = [name for name, sl in non_empty.items() if sl == prev_merged_slots]
+        src_label = "+".join(matching) if matching else "cached"
+        return prev_merged_slots, src_label
+
+    # 3. Перший запуск або досі не було відключень: беремо перше непорожнє джерело
     if non_empty:
-        if prev_slots:
-            for name, sl in non_empty.items():
-                if sl != prev_slots:
-                    return sl, name
         first_name = next(iter(non_empty))
         return non_empty[first_name], first_name
 
+    # 4. Обидва джерела порожні
     if valid_sources:
         first_name = next(iter(valid_sources))
         return valid_sources[first_name], f"{first_name} (empty)"
 
     return {str(i): "yes" for i in range(1, 25)}, "fallback"
 
-def process_queue(s, q, r_kol, prev_today, prev_tomorrow):
-    r_bez = fetch_bezsvitla(s, q)
+
+def process_queue(s, q, prev_today, prev_tomorrow, cache_today_q, cache_tomorrow_q):
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_bez = ex.submit(fetch_bezsvitla, s, q)
+        f_kol = ex.submit(fetch_kolybude, s, q)
+
+        r_bez = f_bez.result()
+        r_kol = f_kol.result()
 
     today_candidates = {
-        'kolybude': r_kol['today'],
         'bezsvitla': r_bez['today'],
+        'kolybude': r_kol['today'],
     }
     tomorrow_candidates = {
-        'kolybude': r_kol['tomorrow'],
         'bezsvitla': r_bez['tomorrow'],
+        'kolybude': r_kol['tomorrow'],
     }
 
-    best_today, src_today = pick_best_slots(today_candidates, prev_today)
-    best_tomorrow, src_tomorrow = pick_best_slots(tomorrow_candidates, prev_tomorrow)
+    best_today, src_today = pick_best_slots(today_candidates, prev_today, cache_today_q)
+    best_tomorrow, src_tomorrow = pick_best_slots(tomorrow_candidates, prev_tomorrow, cache_tomorrow_q)
 
-    log(f"Черга {q:3s} | Сьогодні: {src_today:18s} | Завтра: {src_tomorrow}")
+    # Оновлюємо кеш джерел тільки тими відповідями, які успішно завантажилися (не None)
+    new_cache_today = dict(cache_today_q)
+    for name, sl in today_candidates.items():
+        if sl is not None:
+            new_cache_today[name] = sl
+
+    new_cache_tomorrow = dict(cache_tomorrow_q)
+    for name, sl in tomorrow_candidates.items():
+        if sl is not None:
+            new_cache_tomorrow[name] = sl
+
+    log(f"Черга {q:3s} | Сьогодні: {src_today:20s} | Завтра: {src_tomorrow}")
     return {
         'queue_key': q,
         'today_slots': best_today,
-        'tomorrow_slots': best_tomorrow
+        'tomorrow_slots': best_tomorrow,
+        'cache_today': new_cache_today,
+        'cache_tomorrow': new_cache_tomorrow,
     }
+
 
 def transform_to_gpv(qd, now):
     td = now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=KYIV_TZ)
@@ -238,8 +322,8 @@ def transform_to_gpv(qd, now):
             data[str(ts)][gpv_key] = slots
     return data
 
-def save_results(qd_list):
-    now = datetime.now(KYIV_TZ)
+
+def save_results(qd_list, now):
     data = transform_to_gpv(qd_list, now)
 
     result = {
@@ -285,21 +369,24 @@ def save_results(qd_list):
     log(f"✅ SAVED: {OUTPUT_FILE} ({len([q for q in qd_list if q])}/12)")
     return True
 
+
 def main():
-    log("🔌 GPV ВОЕ ВІННИЦЯ - Dual-Source Parser (KolyBude API + BezSvitla)")
+    log("🔌 GPV ВОЕ ВІННИЦЯ - Dual-Source Parser (BezSvitla + KolyBude)")
     now = datetime.now(KYIV_TZ)
     td = now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=KYIV_TZ)
-    tmt_dt = td + timedelta(days=1)
-
     tts_str = str(int(td.timestamp()))
-    tmt_str = str(int(tmt_dt.timestamp()))
-    today_date_str = td.strftime('%Y-%m-%d')
-    tomorrow_date_str = tmt_dt.strftime('%Y-%m-%d')
+    tmt_str = str(int((td + timedelta(days=1)).timestamp()))
 
     prev_data = load_previous_data()
-    s = create_session()
+    sources_cache = load_sources_cache()
 
-    kolybude_all = fetch_kolybude_all(s, today_date_str, tomorrow_date_str)
+    # Очищаємо застарілі дати в кеші джерел (залишаємо тільки сьогодні і завтра)
+    valid_ts = {tts_str, tmt_str}
+    clean_cache = {ts: val for ts, val in sources_cache.items() if ts in valid_ts}
+    clean_cache.setdefault(tts_str, {})
+    clean_cache.setdefault(tmt_str, {})
+
+    s = create_session()
 
     qdata = []
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -308,15 +395,25 @@ def main():
             gpv_key = QUEUE_TO_GPV[q]
             prev_today = prev_data.get(tts_str, {}).get(gpv_key)
             prev_tomorrow = prev_data.get(tmt_str, {}).get(gpv_key)
+            cache_today_q = clean_cache[tts_str].get(gpv_key, {})
+            cache_tomorrow_q = clean_cache[tmt_str].get(gpv_key, {})
             futures.append(
-                executor.submit(process_queue, s, q, kolybude_all[q], prev_today, prev_tomorrow)
+                executor.submit(
+                    process_queue, s, q, prev_today, prev_tomorrow, cache_today_q, cache_tomorrow_q
+                )
             )
 
         for f in futures:
-            qdata.append(f.result())
+            res = f.result()
+            qdata.append(res)
+            gpv_key = QUEUE_TO_GPV[res['queue_key']]
+            clean_cache[tts_str][gpv_key] = res['cache_today']
+            clean_cache[tmt_str][gpv_key] = res['cache_tomorrow']
 
-    save_results(qdata)
+    save_sources_cache(clean_cache)
+    save_results(qdata, now)
     log("🎉 ГОТОВО!")
+
 
 if __name__ == "__main__":
     main()
