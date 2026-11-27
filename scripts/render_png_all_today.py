@@ -23,7 +23,7 @@ except ImportError:
     print("ERROR: pip install matplotlib")
     sys.exit(1)
 
-TEMPLATE_VERSION = "v5-all-today-shared-state"
+TEMPLATE_VERSION = "v6-all-today-shared-state"
 
 # Авторська палітра кольорів
 BG_COLOR = '#FAF9F6'          # Теплий світлий фон полотна
@@ -272,6 +272,15 @@ def render_all_schedules(json_path, out_path=None):
     else:
         saved_groups = day_entry.setdefault('groups', {})
         saved_diffs = day_entry.setdefault('diffs', {})
+
+        # Очищаємо старі підсвітки всіх груп, якщо хоча б одна група оновилася
+        any_group_changed = any(
+            gkey in saved_groups and today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)}) != saved_groups[gkey]
+            for gkey in gpv_keys
+        )
+        if any_group_changed:
+            saved_diffs.clear()
+            state_modified = True
 
         for gkey in gpv_keys:
             cur_slots = today_data.get(gkey, {str(i): 'yes' for i in range(1, 25)})
