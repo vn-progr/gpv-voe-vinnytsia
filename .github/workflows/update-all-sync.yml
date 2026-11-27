@@ -1,19 +1,19 @@
 name: 🔌 Update Vinnytsia Data & Images
 
 on:
-  # schedule:
+  schedule:
     # Запуск кожні 10 хвилин
-    # - cron: '1 * * * *'
-    # - cron: '11 * * * *'
-    # - cron: '21 * * * *'
-    # - cron: '31 * * * *'
-    # - cron: '41 * * * *'
-    # - cron: '51 * * * *'
+    - cron: '1 * * * *'
+    - cron: '11 * * * *'
+    - cron: '21 * * * *'
+    - cron: '31 * * * *'
+    - cron: '41 * * * *'
+    - cron: '51 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
-  
+
 jobs:
   update-all:
     runs-on: ubuntu-latest
@@ -30,7 +30,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml matplotlib numpy pillow
 
-      - name: 🔄 Parse BezSvitla (scripts/parser.py)
+      - name: 🔄 Parse BezSvitla & KolyBude (scripts/parser.py)
         run: |
           echo "🚀 Running scripts/parser.py..."
           python scripts/parser.py
@@ -66,11 +66,11 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Додаємо JSON
-          git add data/Vinnytsiaoblenerho.json || echo "No JSON changes"
+          # Додаємо чистий JSON та кеш джерел (data/sources_cache.json)
+          git add data/ || echo "No data changes"
           
-          # Додаємо картинки
-          git add images/Vinnytsiaoblenerho/* || mkdir -p images/Vinnytsiaoblenerho
+          # Додаємо картинки та папку hash зі станами рендерерів
+          git add images/Vinnytsiaoblenerho/ || mkdir -p images/Vinnytsiaoblenerho
           
           # Коміт тільки при змінах
           if ! git diff --quiet --cached; then
